@@ -151,7 +151,8 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
 
   await server.register(cors, {
     origin: true,
-    credentials: true
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]
   });
   await server.register(websocket);
 
