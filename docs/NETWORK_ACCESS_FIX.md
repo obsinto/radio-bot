@@ -8,14 +8,15 @@ O frontend estava configurado para buscar a API em `http://localhost:3000`. Quan
 ## Alterações Realizadas
 
 ### 1. Configuração do Vite (`apps/web/vite.config.ts`)
-O Vite foi configurado para carregar as variáveis de ambiente a partir da raiz do projeto. Isso permite que o frontend reconheça o `VITE_API_URL` definido no arquivo `.env` principal.
+O Vite carrega as variáveis de ambiente do app web. Isso permite que o frontend reconheça o `VITE_API_URL` definido em `apps/web/.env`.
 
 ```typescript
 // apps/web/vite.config.ts
 export default defineConfig({
-  // ...
-  envDir: "../../",
-  // ...
+  plugins: [react()],
+  server: {
+    port: 5173
+  }
 });
 ```
 
@@ -33,7 +34,7 @@ const API_URL =
 
 1. **Acesso via IP:** Use o endereço IP do seu computador na rede local para acessar o painel no tablet.
    * Exemplo: `http://192.168.1.174:5173`
-2. **Configuração Manual (Opcional):** Se preferir fixar um endereço, você pode editar o arquivo `.env` na raiz do projeto:
+2. **Configuração Manual (Opcional):** Se preferir fixar um endereço, você pode editar `apps/web/.env`:
    ```env
    VITE_API_URL=http://192.168.1.174:3000
    ```

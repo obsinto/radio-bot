@@ -10,6 +10,15 @@ Crie:
 - App API usando `apps/api/Dockerfile`, porta `3000`.
 - App Web usando `apps/web/Dockerfile`, porta `4173`.
 
+No Coolify, use o caminho do arquivo Dockerfile, nao a pasta:
+
+| App | Base Directory | Dockerfile Location | Porta |
+| --- | --- | --- | --- |
+| API | vazio / raiz do repo | `apps/api/Dockerfile` | `3000` |
+| Web | vazio / raiz do repo | `apps/web/Dockerfile` | `4173` |
+
+Mantenha o `Base Directory` na raiz do repositorio. Os Dockerfiles copiam `packages/shared`, `package.json` e os workspaces a partir da raiz. Nao use `web` como Dockerfile, porque esse caminho aponta para uma pasta e o build falha com `failed to read dockerfile: .../web: is a directory`.
+
 Dominios sugeridos:
 
 - API: `https://api.seu-dominio.com`
@@ -33,6 +42,8 @@ DEVICES_JSON=[{"id":"studio-01","name":"Studio 01","location":"Local principal",
 WOL_GATEWAYS_JSON=[{"id":"esp-studio-01","name":"Gateway ESP32 Studio 01","location":"Local principal","token":"troque-token-esp32"}]
 ```
 
+Referencia local: `apps/api/.env.example`.
+
 Depois do primeiro deploy com PostgreSQL, novos cadastros feitos no painel ficam no banco.
 
 ## 3. Variaveis Do Web
@@ -44,6 +55,8 @@ VITE_API_URL=https://api.seu-dominio.com
 ```
 
 Importante: `VITE_API_URL` entra no build do frontend. Se mudar a URL da API, rode novo deploy/build do app web.
+
+Referencia local: `apps/web/.env.example`.
 
 ## 4. Validar API
 
@@ -60,12 +73,22 @@ Esperado: HTTP 200.
 Na maquina onde voce vai compilar/gravar o ESP32:
 
 ```bash
-export WIFI_SSID="nome-da-rede-local-da-radio"
-export WIFI_PASSWORD="senha-do-wifi"
-export API_BASE_URL="https://api.seu-dominio.com"
-export WOL_GATEWAY_ID="esp-studio-01"
-export WOL_GATEWAY_TOKEN="troque-token-esp32"
+cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
+```
 
+Edite `firmware/esp32-wol-gateway/.env`:
+
+```bash
+WIFI_SSID=nome-da-rede-local-da-radio
+WIFI_PASSWORD=senha-do-wifi
+API_BASE_URL=https://api.seu-dominio.com
+WOL_GATEWAY_ID=esp-studio-01
+WOL_GATEWAY_TOKEN=troque-token-esp32
+```
+
+Gere o `config.h`:
+
+```bash
 ./scripts/firmware/write-esp32-config.sh
 ```
 

@@ -20,14 +20,11 @@ WOL_GATEWAYS_JSON=[{"id":"esp-studio-01","name":"Gateway ESP32 Studio 01","locat
 
 ## Preparar Firmware
 
-Opcao recomendada, gerando `config.h` por variaveis de ambiente:
+Opcao recomendada, gerando `config.h` a partir do `.env` do firmware:
 
 ```bash
-export WIFI_SSID="nome-da-rede"
-export WIFI_PASSWORD="senha-da-rede"
-export API_BASE_URL="https://api.seu-dominio.com"
-export WOL_GATEWAY_ID="esp-studio-01"
-export WOL_GATEWAY_TOKEN="token-gerado-no-painel"
+cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
+# edite firmware/esp32-wol-gateway/.env
 
 ./scripts/firmware/write-esp32-config.sh
 ```

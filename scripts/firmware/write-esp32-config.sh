@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+env_file="${ENV_FILE:-firmware/esp32-wol-gateway/.env}"
+if [[ -f "$env_file" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+fi
+
 required_vars=(
   WIFI_SSID
   WIFI_PASSWORD

@@ -24,9 +24,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY --from=build /app/package.json /app/package-lock.json* ./
+COPY --from=build /app/tsconfig.base.json ./
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/apps/web apps/web
 
 EXPOSE 4173
-CMD ["npm", "run", "preview", "-w", "@radio-bot/web", "--", "--host", "0.0.0.0"]
-
+CMD ["npm", "run", "preview", "-w", "@radio-bot/web"]

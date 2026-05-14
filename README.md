@@ -18,13 +18,19 @@ MVP para controlar, pelo navegador, um site de radio em computadores locais dife
 npm install
 ```
 
-2. Crie o ambiente local:
+2. Crie os ambientes locais conforme o app:
 
 ```bash
-cp .env.example .env
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env
+cp apps/agent/.env.example apps/agent/.env
 ```
 
-3. Edite `.env` com usuarios, senha do painel, perfis de radio e tokens dos agentes.
+3. Edite:
+
+- `apps/api/.env`: usuarios, senha do painel, perfis, computadores, gateways e banco.
+- `apps/web/.env`: URL da API usada pelo painel.
+- `apps/agent/.env`: URL WebSocket da API e token do computador local.
 
 4. Em terminais separados:
 
@@ -95,11 +101,17 @@ Fluxo:
 1. Cadastre um gateway ESP32 no painel em "Configurar Wake on LAN".
 2. Anote `WOL_GATEWAY_ID` e `WOL_GATEWAY_TOKEN` mostrados no painel.
 3. Configure o MAC do computador e associe ele ao gateway ESP32.
-4. Copie `firmware/esp32-wol-gateway/include/config.example.h` para `firmware/esp32-wol-gateway/include/config.h`.
-5. Preencha Wi-Fi, `API_BASE_URL`, `WOL_GATEWAY_ID` e `WOL_GATEWAY_TOKEN`.
-6. Grave o ESP32:
+4. Crie `firmware/esp32-wol-gateway/.env` a partir do exemplo:
 
 ```bash
+cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
+```
+
+5. Preencha Wi-Fi, `API_BASE_URL`, `WOL_GATEWAY_ID` e `WOL_GATEWAY_TOKEN`.
+6. Gere o `config.h` e grave o ESP32:
+
+```bash
+./scripts/firmware/write-esp32-config.sh
 cd firmware/esp32-wol-gateway
 platformio run --target upload
 ```
@@ -163,4 +175,3 @@ VITE_API_URL=https://api.seu-dominio.com
 ```
 
 Configure HTTPS no dominio publico e use `wss://api.seu-dominio.com/agent` nos agentes locais.
-# radio-bot
