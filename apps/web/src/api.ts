@@ -122,6 +122,31 @@ export async function createDevice(input: {
   return parseResponse<SafeDevice & { token: string }>(response);
 }
 
+export async function updateDeviceProfiles(input: {
+  token: string;
+  deviceId: string;
+  profileIds: string[];
+}): Promise<{
+  id: string;
+  profileIds: string[];
+}> {
+  const response = await fetch(`${API_URL}/api/devices/${input.deviceId}/profiles`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      profileIds: input.profileIds
+    })
+  });
+
+  return parseResponse<{
+    id: string;
+    profileIds: string[];
+  }>(response);
+}
+
 export async function updateDeviceWol(input: {
   token: string;
   deviceId: string;

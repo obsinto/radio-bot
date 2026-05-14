@@ -322,6 +322,17 @@ export class AppStore {
     return device;
   }
 
+  updateDeviceProfiles(deviceId: string, profileIds: string[]): Device | null {
+    const device = this.getDevice(deviceId);
+    if (!device) {
+      return null;
+    }
+
+    const allowed = profileIds.filter((profileId) => this.profiles.has(profileId));
+    device.profileIds = allowed;
+    return device;
+  }
+
   reserveWolCommand(gatewayId: string): WolGatewayCommand | null {
     const commands = [...this.commands.values()].sort((a, b) =>
       a.createdAt.localeCompare(b.createdAt)

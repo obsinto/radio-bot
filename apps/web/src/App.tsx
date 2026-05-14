@@ -9,6 +9,7 @@ import {
   LogIn,
   Monitor,
   KeyRound,
+  Pencil,
   Plus,
   Power,
   PowerOff,
@@ -39,6 +40,7 @@ import {
   getState,
   login,
   sendCommand,
+  updateDeviceProfiles,
   updateDeviceWol
 } from "./api.js";
 
@@ -117,6 +119,7 @@ export function App() {
   const [dismissedPromptIds, setDismissedPromptIds] = useState<string[]>([]);
   const [adminOpen, setAdminOpen] = useState(false);
   const [wolOpen, setWolOpen] = useState(false);
+  const [editDevicesOpen, setEditDevicesOpen] = useState(false);
   const [expandedScreenshot, setExpandedScreenshot] = useState<string | null>(null);
 
   const selectedDevice = useMemo(
@@ -340,6 +343,10 @@ export function App() {
             <Zap aria-hidden="true" />
             Configurar Wake on LAN
           </button>
+          <button className="admin-launch" type="button" onClick={() => setEditDevicesOpen(true)}>
+            <Pencil aria-hidden="true" />
+            Editar computadores
+          </button>
         </aside>
 
         <section className="control-surface">
@@ -436,6 +443,17 @@ export function App() {
           devices={dashboard?.devices ?? []}
           gateways={dashboard?.wolGateways ?? []}
           onClose={() => setWolOpen(false)}
+          onNotice={setMessage}
+          onRefresh={async () => setDashboard(await getState(token))}
+        />
+      ) : null}
+
+      {editDevicesOpen ? (
+        <DeviceProfilesModal
+          token={token}
+          devices={dashboard?.devices ?? []}
+          profiles={dashboard?.profiles ?? []}
+          onClose={() => setEditDevicesOpen(false)}
           onNotice={setMessage}
           onRefresh={async () => setDashboard(await getState(token))}
         />
@@ -658,6 +676,123 @@ function WolModal({
                   type="button"
                   className="small-action"
                   disabled={savingId === device.id}
+                  onClick={() => save(device.id)}
+                >
+                  <Save aria-hidden="true" />
+                  {savingId === device.id ? "Salvando" : "Salvar"}
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DeviceProfilesModal({
+  token,
+  devices,
+  profiles,
+  onClose,
+  onNotice,
+  onRefresh
+}: {
+  token: string;
+  devices: SafeDevice[];
+  profiles: SafeSiteProfile[];
+  onClose: () => void;
+  onNotice: (message: string | null) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, string[]>>(() => {
+    const initial: Record<string, string[]> = {};
+    for (const device of devices) {
+      initial[device.id] = [...device.profileIds];
+    }
+    return initial;
+  });
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  function toggleProfile(deviceId: string, profileId: string) {
+    setDrafts((current) => {
+      const selected = current[deviceId] ?? [];
+      const next = selected.includes(profileId)
+        ? selected.filter((id) => id !== profileId)
+        : [...selected, profileId];
+      return { ...current, [deviceId]: next };
+    });
+  }
+
+  async function save(deviceId: string) {
+    setSavingId(deviceId);
+    try {
+      await updateDeviceProfiles({
+        token,
+        deviceId,
+        profileIds: drafts[deviceId] ?? []
+      });
+      onNotice("Radios vinculadas atualizadas.");
+      await onRefresh();
+    } catch (error) {
+      onNotice((error as ApiError).message ?? "Nao foi possivel atualizar.");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section
+        className="modal admin-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-devices-title"
+      >
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Editar</p>
+            <h2 id="edit-devices-title">Vincular radios aos computadores</h2>
+          </div>
+          <button className="icon-button modal-close" type="button" onClick={onClose} title="Fechar">
+            <X aria-hidden="true" />
+          </button>
+        </div>
+
+        <p className="wol-hint">
+          Marque quais radios cada computador pode controlar. Um computador sem radio vinculada
+          nao recebe comandos.
+        </p>
+
+        <div className="wol-grid">
+          {devices.length === 0 ? <p className="muted">Nenhum computador cadastrado.</p> : null}
+          {profiles.length === 0 ? (
+            <p className="muted">Nenhuma radio cadastrada. Adicione uma radio primeiro.</p>
+          ) : null}
+          {devices.map((device) => {
+            const selected = drafts[device.id] ?? [];
+            return (
+              <article className="wol-row" key={device.id}>
+                <header>
+                  <strong>{device.name}</strong>
+                  <span>{device.location}</span>
+                </header>
+                <div className="profile-checkbox-list">
+                  {profiles.map((profile) => (
+                    <label key={profile.id} className="profile-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(profile.id)}
+                        onChange={() => toggleProfile(device.id, profile.id)}
+                      />
+                      <span>{profile.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="small-action"
+                  disabled={savingId === device.id || profiles.length === 0}
                   onClick={() => save(device.id)}
                 >
                   <Save aria-hidden="true" />

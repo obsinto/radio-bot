@@ -323,6 +323,40 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     });
   });
 
+  server.patch("/api/devices/:deviceId/profiles", async (request, reply) => {
+    const { deviceId } = request.params as { deviceId: string };
+    const body = request.body as { profileIds?: unknown } | undefined;
+
+    if (
+      !body ||
+      !Array.isArray(body.profileIds) ||
+      !body.profileIds.every((profileId) => typeof profileId === "string")
+    ) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "INVALID_PROFILE_IDS",
+        message: "Lista de radios invalida."
+      });
+    }
+
+    const device = await store.updateDeviceProfiles(deviceId, body.profileIds as string[]);
+    if (!device) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "DEVICE_NOT_FOUND",
+        message: "Computador nao encontrado."
+      });
+    }
+
+    return reply.send({
+      ok: true,
+      data: {
+        id: device.id,
+        profileIds: device.profileIds
+      }
+    });
+  });
+
   server.post("/api/devices/:deviceId/commands", async (request, reply) => {
     const { deviceId } = request.params as { deviceId: string };
     const body = request.body;

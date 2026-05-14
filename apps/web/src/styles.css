@@ -685,6 +685,33 @@ h1 {
   font-weight: 850;
 }
 
+.profile-checkbox-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 6px 0 4px;
+}
+
+.profile-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.profile-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.profile-checkbox span {
+  color: inherit;
+}
+
 .ghost-button {
   background: #ece3d6;
   color: var(--ink);

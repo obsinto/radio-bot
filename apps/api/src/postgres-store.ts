@@ -520,6 +520,43 @@ export class PostgresStore {
     return this.getDevice(deviceId);
   }
 
+  async updateDeviceProfiles(deviceId: string, profileIds: string[]): Promise<Device | null> {
+    const exists = await this.pool.query("SELECT 1 FROM devices WHERE id = $1", [deviceId]);
+    if ((exists.rowCount ?? 0) === 0) {
+      return null;
+    }
+
+    const allowed = await this.filterExistingProfileIds(profileIds);
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM device_profiles WHERE device_id = $1", [deviceId]);
+      for (const profileId of allowed) {
+        await client.query(
+          `
+            INSERT INTO device_profiles (device_id, profile_id)
+            VALUES ($1, $2)
+            ON CONFLICT DO NOTHING
+          `,
+          [deviceId, profileId]
+        );
+      }
+      await client.query(
+        "UPDATE devices SET updated_at = NOW() WHERE id = $1",
+        [deviceId]
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return this.getDevice(deviceId);
+  }
+
   async reserveWolCommand(gatewayId: string): Promise<WolGatewayCommand | null> {
     const client = await this.pool.connect();
     try {
