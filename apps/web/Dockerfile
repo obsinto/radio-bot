@@ -18,15 +18,10 @@ COPY apps/web apps/web
 RUN npm run build -w @radio-bot/shared
 RUN npm run build -w @radio-bot/web
 
-FROM node:24-slim
+FROM nginx:1.27-alpine
 
-WORKDIR /app
-ENV NODE_ENV=production
+COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 
-COPY --from=build /app/package.json /app/package-lock.json* ./
-COPY --from=build /app/tsconfig.base.json ./
-COPY --from=build /app/node_modules node_modules
-COPY --from=build /app/apps/web apps/web
-
-EXPOSE 4173
-CMD ["npm", "run", "preview", "-w", "@radio-bot/web"]
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

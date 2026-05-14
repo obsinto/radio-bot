@@ -8,14 +8,14 @@ Crie:
 
 - PostgreSQL.
 - App API usando `apps/api/Dockerfile`, porta `3000`.
-- App Web usando `apps/web/Dockerfile`, porta `4173`.
+- App Web usando `apps/web/Dockerfile`, porta `80` (nginx servindo estatico).
 
 No Coolify, use o caminho do arquivo Dockerfile, nao a pasta:
 
 | App | Base Directory | Dockerfile Location | Porta |
 | --- | --- | --- | --- |
 | API | vazio / raiz do repo | `apps/api/Dockerfile` | `3000` |
-| Web | vazio / raiz do repo | `apps/web/Dockerfile` | `4173` |
+| Web | vazio / raiz do repo | `apps/web/Dockerfile` | `80` |
 
 Mantenha o `Base Directory` na raiz do repositorio. Os Dockerfiles copiam `packages/shared`, `package.json` e os workspaces a partir da raiz. Nao use `web` como Dockerfile, porque esse caminho aponta para uma pasta e o build falha com `failed to read dockerfile: .../web: is a directory`.
 
@@ -52,6 +52,7 @@ Configure no app web:
 
 ```bash
 VITE_API_URL=https://api.seu-dominio.com
+VITE_ALLOWED_HOSTS=painel.seu-dominio.com
 ```
 
 Importante: `VITE_API_URL` entra no build do frontend. Se mudar a URL da API, rode novo deploy/build do app web.

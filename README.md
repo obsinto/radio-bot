@@ -150,7 +150,7 @@ Roteiro detalhado com ESP32/WOL: `docs/COOLIFY_DEPLOY_WOL.md`.
 Crie um recurso PostgreSQL e dois apps no Coolify usando este repositorio:
 
 - API: Dockerfile `apps/api/Dockerfile`, porta `3000`.
-- Web: Dockerfile `apps/web/Dockerfile`, porta `4173`.
+- Web: Dockerfile `apps/web/Dockerfile`, porta `80` (nginx servindo estatico).
 
 Variaveis da API no Coolify:
 
