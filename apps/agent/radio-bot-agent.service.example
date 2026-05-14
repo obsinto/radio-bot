@@ -1,0 +1,16 @@
+[Unit]
+Description=Radio BOT Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/radio-bot
+EnvironmentFile=/opt/radio-bot/.env
+ExecStart=/usr/bin/npm run start -w @radio-bot/agent
+Restart=always
+RestartSec=5
+User=radio-bot
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+{
+  "name": "radio-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @radio-bot/shared && npm run build -w @radio-bot/api && npm run build -w @radio-bot/agent && npm run build -w @radio-bot/web",
+    "dev:api": "npm run build -w @radio-bot/shared && npm run dev -w @radio-bot/api",
+    "dev:agent": "npm run build -w @radio-bot/shared && npm run dev -w @radio-bot/agent",
+    "dev:web": "npm run build -w @radio-bot/shared && npm run dev -w @radio-bot/web",
+    "typecheck": "npm run typecheck -w @radio-bot/shared && npm run typecheck -w @radio-bot/api && npm run typecheck -w @radio-bot/agent && npm run typecheck -w @radio-bot/web"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
+
