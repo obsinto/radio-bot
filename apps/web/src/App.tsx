@@ -162,7 +162,6 @@ export function App() {
             prompt: promptCommand.output?.sitePrompt as SitePrompt
           });
         }
-        setMessage(null);
       } catch (error) {
         const apiError = error as ApiError;
         if (apiError.code === "UNAUTHORIZED") {
@@ -394,6 +393,14 @@ export function App() {
             <div className="inline-alert">
               <AlertTriangle aria-hidden="true" />
               <span>{message}</span>
+              <button
+                className="icon-button alert-close"
+                type="button"
+                onClick={() => setMessage(null)}
+                title="Fechar"
+              >
+                <X aria-hidden="true" />
+              </button>
             </div>
           ) : null}
 

@@ -484,8 +484,16 @@ h1 {
 }
 
 .inline-alert span {
+  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.alert-close {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  color: var(--red);
 }
 
 .command-log {
