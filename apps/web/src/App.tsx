@@ -113,7 +113,10 @@ export function App() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<CommandAction | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessageState] = useState<{ text: string; tone: "error" | "success" } | null>(null);
+  const setMessage = (text: string | null, tone: "error" | "success" = "error") => {
+    setMessageState(text === null ? null : { text, tone });
+  };
   const [pendingConflict, setPendingConflict] = useState<PendingConflict | null>(null);
   const [pendingSitePrompt, setPendingSitePrompt] = useState<PendingSitePrompt | null>(null);
   const [dismissedPromptIds, setDismissedPromptIds] = useState<string[]>([]);
@@ -289,7 +292,7 @@ export function App() {
               <LogIn aria-hidden="true" />
               Entrar
             </button>
-            {message ? <p className="form-error">{message}</p> : null}
+            {message ? <p className="form-error">{message.text}</p> : null}
           </form>
         </section>
       </main>
@@ -390,9 +393,13 @@ export function App() {
           </div>
 
           {message ? (
-            <div className="inline-alert">
-              <AlertTriangle aria-hidden="true" />
-              <span>{message}</span>
+            <div className={`inline-alert tone-${message.tone}`}>
+              {message.tone === "success" ? (
+                <CheckCircle2 aria-hidden="true" />
+              ) : (
+                <AlertTriangle aria-hidden="true" />
+              )}
+              <span>{message.text}</span>
               <button
                 className="icon-button alert-close"
                 type="button"
@@ -488,7 +495,7 @@ function WolModal({
   devices: SafeDevice[];
   gateways: SafeWolGateway[];
   onClose: () => void;
-  onNotice: (message: string | null) => void;
+  onNotice: (message: string | null, tone?: "error" | "success") => void;
   onRefresh: () => Promise<void>;
 }) {
   const [drafts, setDrafts] = useState<
@@ -528,7 +535,7 @@ function WolModal({
         gatewayId: gateway.id,
         token: gateway.token
       });
-      onNotice("Gateway ESP32 criado.");
+      onNotice("Gateway ESP32 criado.", "success");
       await onRefresh();
     } catch (error) {
       onNotice((error as ApiError).message ?? "Nao foi possivel criar o gateway.");
@@ -551,7 +558,7 @@ function WolModal({
         broadcastAddress: draft.broadcast,
         wolGatewayId: draft.gatewayId
       });
-      onNotice("Configuracao salva.");
+      onNotice("Configuracao salva.", "success");
       await onRefresh();
     } catch (error) {
       onNotice((error as ApiError).message ?? "Nao foi possivel salvar.");
@@ -709,7 +716,7 @@ function DeviceProfilesModal({
   devices: SafeDevice[];
   profiles: SafeSiteProfile[];
   onClose: () => void;
-  onNotice: (message: string | null) => void;
+  onNotice: (message: string | null, tone?: "error" | "success") => void;
   onRefresh: () => Promise<void>;
 }) {
   const [drafts, setDrafts] = useState<Record<string, string[]>>(() => {
@@ -739,7 +746,7 @@ function DeviceProfilesModal({
         deviceId,
         profileIds: drafts[deviceId] ?? []
       });
-      onNotice("Radios vinculadas atualizadas.");
+      onNotice("Radios vinculadas atualizadas.", "success");
       await onRefresh();
     } catch (error) {
       onNotice((error as ApiError).message ?? "Nao foi possivel atualizar.");
@@ -855,7 +862,7 @@ function AdminForms({
   token: string;
   profiles: SafeSiteProfile[];
   onClose: () => void;
-  onNotice: (message: string | null) => void;
+  onNotice: (message: string | null, tone?: "error" | "success") => void;
   onRefresh: () => Promise<void>;
 }) {
   const [profileName, setProfileName] = useState("");
@@ -884,7 +891,7 @@ function AdminForms({
       setProfileName("");
       setUsername("");
       setPassword("");
-      onNotice("Radio adicionada.");
+      onNotice("Radio adicionada.", "success");
       await onRefresh();
     } catch (error) {
       onNotice((error as ApiError).message ?? "Nao foi possivel adicionar radio.");
@@ -907,7 +914,7 @@ function AdminForms({
         deviceId: device.id,
         token: device.token
       });
-      onNotice("Computador adicionado.");
+      onNotice("Computador adicionado.", "success");
       await onRefresh();
     } catch (error) {
       onNotice((error as ApiError).message ?? "Nao foi possivel adicionar computador.");
