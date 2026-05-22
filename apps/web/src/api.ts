@@ -6,7 +6,11 @@ import type {
   DashboardState,
   SafeDevice,
   SafeSiteProfile,
-  SafeWolGateway
+  SafeWolGateway,
+  ScheduleInput,
+  ScheduleRecord,
+  ScheduleRunRecord,
+  ScheduleUpdate
 } from "@radio-bot/shared";
 
 const API_URL =
@@ -198,4 +202,65 @@ export async function createWolGateway(input: {
   });
 
   return parseResponse<SafeWolGateway & { token: string }>(response);
+}
+
+export async function createSchedule(input: {
+  token: string;
+  schedule: ScheduleInput;
+}): Promise<ScheduleRecord> {
+  const response = await fetch(`${API_URL}/api/schedules`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input.schedule)
+  });
+
+  return parseResponse<ScheduleRecord>(response);
+}
+
+export async function updateSchedule(input: {
+  token: string;
+  scheduleId: string;
+  schedule: ScheduleUpdate;
+}): Promise<ScheduleRecord> {
+  const response = await fetch(`${API_URL}/api/schedules/${input.scheduleId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input.schedule)
+  });
+
+  return parseResponse<ScheduleRecord>(response);
+}
+
+export async function deleteSchedule(input: {
+  token: string;
+  scheduleId: string;
+}): Promise<{ id: string }> {
+  const response = await fetch(`${API_URL}/api/schedules/${input.scheduleId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${input.token}`
+    }
+  });
+
+  return parseResponse<{ id: string }>(response);
+}
+
+export async function runScheduleNow(input: {
+  token: string;
+  scheduleId: string;
+}): Promise<ScheduleRunRecord> {
+  const response = await fetch(`${API_URL}/api/schedules/${input.scheduleId}/run-now`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.token}`
+    }
+  });
+
+  return parseResponse<ScheduleRunRecord>(response);
 }

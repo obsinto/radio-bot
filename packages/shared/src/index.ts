@@ -6,6 +6,9 @@ export const COMMAND_ACTIONS = [
   "get_state",
   "click_action",
   "confirm_open_here",
+  "play_radio",
+  "stop_playback",
+  "shutdown",
   "power_on"
 ] as const;
 
@@ -18,6 +21,12 @@ export type CommandStatus =
   | "waiting_confirmation"
   | "succeeded"
   | "failed";
+
+export type ScheduleKind = "power_on_start" | "shutdown";
+
+export type ScheduleStatus = "enabled" | "disabled";
+
+export type ScheduleRunStatus = "running" | "succeeded" | "failed";
 
 export type DeviceStatus = "offline" | "online";
 
@@ -85,6 +94,45 @@ export type CommandRecord = {
   screenshot: string | null;
 };
 
+export type ScheduleRecord = {
+  id: string;
+  name: string;
+  kind: ScheduleKind;
+  deviceId: string;
+  profileId: string | null;
+  timezone: string;
+  timeOfDay: string;
+  daysOfWeek: number[];
+  status: ScheduleStatus;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScheduleRunRecord = {
+  id: string;
+  scheduleId: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: ScheduleRunStatus;
+  error: string | null;
+  commandIds: string[];
+};
+
+export type ScheduleInput = {
+  name: string;
+  kind: ScheduleKind;
+  deviceId: string;
+  profileId?: string | null;
+  timezone: string;
+  timeOfDay: string;
+  daysOfWeek: number[];
+  status?: ScheduleStatus;
+};
+
+export type ScheduleUpdate = Partial<ScheduleInput>;
+
 export type CommandRequest = {
   action: CommandAction;
   profileId: string;
@@ -97,6 +145,8 @@ export type DashboardState = {
   devices: SafeDevice[];
   wolGateways: SafeWolGateway[];
   commands: CommandRecord[];
+  schedules: ScheduleRecord[];
+  scheduleRuns: ScheduleRunRecord[];
 };
 
 export type WolGatewayCommand = {

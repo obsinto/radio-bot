@@ -9,6 +9,13 @@ import {
   type SafeDevice,
   type SafeSiteProfile,
   type SafeWolGateway,
+  type ScheduleInput,
+  type ScheduleKind,
+  type ScheduleRecord,
+  type ScheduleRunRecord,
+  type ScheduleRunStatus,
+  type ScheduleStatus,
+  type ScheduleUpdate,
   type SiteProfile,
   type WolGateway,
   type WolGatewayCommand,
@@ -69,6 +76,32 @@ type CommandRow = QueryResultRow & {
   screenshot: string | null;
 };
 
+type ScheduleRow = QueryResultRow & {
+  id: string;
+  name: string;
+  kind: ScheduleKind;
+  device_id: string;
+  profile_id: string | null;
+  timezone: string;
+  time_of_day: string;
+  days_of_week: number[] | string;
+  status: ScheduleStatus;
+  last_run_at: Date | string | null;
+  next_run_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+};
+
+type ScheduleRunRow = QueryResultRow & {
+  id: string;
+  schedule_id: string;
+  started_at: Date | string;
+  finished_at: Date | string | null;
+  status: ScheduleRunStatus;
+  error: string | null;
+  command_ids: string[] | string | null;
+};
+
 export class PostgresStore {
   private constructor(
     private readonly pool: Pool,
@@ -96,18 +129,22 @@ export class PostgresStore {
   }
 
   async getDashboardState(): Promise<DashboardState> {
-    const [profiles, devices, wolGateways, commands] = await Promise.all([
+    const [profiles, devices, wolGateways, commands, schedules, scheduleRuns] = await Promise.all([
       this.listSafeProfiles(),
       this.listSafeDevices(),
       this.listSafeWolGateways(),
-      this.listRecentCommands()
+      this.listRecentCommands(),
+      this.listSchedules(),
+      this.listRecentScheduleRuns()
     ]);
 
     return {
       profiles,
       devices,
       wolGateways,
-      commands
+      commands,
+      schedules,
+      scheduleRuns
     };
   }
 
@@ -143,6 +180,165 @@ export class PostgresStore {
       "SELECT * FROM commands ORDER BY created_at DESC LIMIT 30"
     );
     return result.rows.map((row) => this.commandFromRow(row));
+  }
+
+  async listSchedules(): Promise<ScheduleRecord[]> {
+    const result = await this.pool.query<ScheduleRow>(
+      "SELECT * FROM schedules ORDER BY name ASC"
+    );
+    return result.rows.map((row) => this.scheduleFromRow(row));
+  }
+
+  async listRecentScheduleRuns(limit = 30): Promise<ScheduleRunRecord[]> {
+    const result = await this.pool.query<ScheduleRunRow>(
+      "SELECT * FROM schedule_runs ORDER BY started_at DESC LIMIT $1",
+      [limit]
+    );
+    return result.rows.map((row) => this.scheduleRunFromRow(row));
+  }
+
+  async listScheduleRuns(scheduleId: string, limit = 30): Promise<ScheduleRunRecord[]> {
+    const result = await this.pool.query<ScheduleRunRow>(
+      `
+        SELECT * FROM schedule_runs
+        WHERE schedule_id = $1
+        ORDER BY started_at DESC
+        LIMIT $2
+      `,
+      [scheduleId, limit]
+    );
+    return result.rows.map((row) => this.scheduleRunFromRow(row));
+  }
+
+  async getSchedule(scheduleId: string): Promise<ScheduleRecord | null> {
+    const result = await this.pool.query<ScheduleRow>(
+      "SELECT * FROM schedules WHERE id = $1",
+      [scheduleId]
+    );
+    return result.rows[0] ? this.scheduleFromRow(result.rows[0]) : null;
+  }
+
+  async createSchedule(input: ScheduleInput & { nextRunAt: string | null }): Promise<ScheduleRecord> {
+    const id = await this.uniqueId(input.name, "schedules");
+    const result = await this.pool.query<ScheduleRow>(
+      `
+        INSERT INTO schedules (
+          id, name, kind, device_id, profile_id, timezone, time_of_day,
+          days_of_week, status, next_run_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *
+      `,
+      [
+        id,
+        input.name.trim(),
+        input.kind,
+        input.deviceId,
+        input.profileId ?? null,
+        input.timezone,
+        input.timeOfDay,
+        input.daysOfWeek,
+        input.status ?? "enabled",
+        input.nextRunAt
+      ]
+    );
+    return this.scheduleFromRow(result.rows[0]);
+  }
+
+  async updateSchedule(
+    scheduleId: string,
+    update: ScheduleUpdate & { nextRunAt?: string | null }
+  ): Promise<ScheduleRecord | null> {
+    const current = await this.getSchedule(scheduleId);
+    if (!current) {
+      return null;
+    }
+
+    const result = await this.pool.query<ScheduleRow>(
+      `
+        UPDATE schedules
+        SET
+          name = $2,
+          kind = $3,
+          device_id = $4,
+          profile_id = $5,
+          timezone = $6,
+          time_of_day = $7,
+          days_of_week = $8,
+          status = $9,
+          next_run_at = $10,
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [
+        scheduleId,
+        update.name?.trim() ?? current.name,
+        update.kind ?? current.kind,
+        update.deviceId ?? current.deviceId,
+        "profileId" in update ? update.profileId ?? null : current.profileId,
+        update.timezone ?? current.timezone,
+        update.timeOfDay ?? current.timeOfDay,
+        update.daysOfWeek ?? current.daysOfWeek,
+        update.status ?? current.status,
+        "nextRunAt" in update ? update.nextRunAt ?? null : current.nextRunAt
+      ]
+    );
+    return result.rows[0] ? this.scheduleFromRow(result.rows[0]) : null;
+  }
+
+  async deleteSchedule(scheduleId: string): Promise<boolean> {
+    const result = await this.pool.query("DELETE FROM schedules WHERE id = $1", [scheduleId]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async createScheduleRun(scheduleId: string): Promise<ScheduleRunRecord> {
+    const result = await this.pool.query<ScheduleRunRow>(
+      `
+        INSERT INTO schedule_runs (id, schedule_id, status, command_ids)
+        VALUES ($1, $2, 'running', '{}')
+        RETURNING *
+      `,
+      [randomUUID(), scheduleId]
+    );
+    return this.scheduleRunFromRow(result.rows[0]);
+  }
+
+  async completeScheduleRun(
+    runId: string,
+    result: {
+      status: Exclude<ScheduleRunStatus, "running">;
+      error?: string | null;
+      commandIds: string[];
+    }
+  ): Promise<ScheduleRunRecord | null> {
+    const update = await this.pool.query<ScheduleRunRow>(
+      `
+        UPDATE schedule_runs
+        SET
+          status = $2,
+          error = $3,
+          command_ids = $4,
+          finished_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [runId, result.status, result.error ?? null, result.commandIds]
+    );
+    return update.rows[0] ? this.scheduleRunFromRow(update.rows[0]) : null;
+  }
+
+  async markScheduleTriggered(scheduleId: string, nextRunAt: string | null): Promise<ScheduleRecord | null> {
+    const result = await this.pool.query<ScheduleRow>(
+      `
+        UPDATE schedules
+        SET last_run_at = NOW(), next_run_at = $2, updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [scheduleId, nextRunAt]
+    );
+    return result.rows[0] ? this.scheduleFromRow(result.rows[0]) : null;
   }
 
   async createProfile(input: {
@@ -738,10 +934,38 @@ export class PostgresStore {
         screenshot TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS schedules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        profile_id TEXT REFERENCES site_profiles(id) ON DELETE CASCADE,
+        timezone TEXT NOT NULL,
+        time_of_day TEXT NOT NULL,
+        days_of_week INTEGER[] NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'enabled',
+        last_run_at TIMESTAMPTZ,
+        next_run_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS schedule_runs (
+        id UUID PRIMARY KEY,
+        schedule_id TEXT NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        finished_at TIMESTAMPTZ,
+        status TEXT NOT NULL,
+        error TEXT,
+        command_ids TEXT[] NOT NULL DEFAULT '{}'
+      );
+
       CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
       CREATE INDEX IF NOT EXISTS idx_devices_current_profile ON devices(current_profile_id);
       CREATE INDEX IF NOT EXISTS idx_commands_created_at ON commands(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_commands_device ON commands(device_id);
+      CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at) WHERE status = 'enabled';
+      CREATE INDEX IF NOT EXISTS idx_schedule_runs_schedule ON schedule_runs(schedule_id, started_at DESC);
 
       ALTER TABLE devices ADD COLUMN IF NOT EXISTS mac_address TEXT;
       ALTER TABLE devices ADD COLUMN IF NOT EXISTS broadcast_address TEXT;
@@ -895,11 +1119,72 @@ export class PostgresStore {
     };
   }
 
+  private scheduleFromRow(row: ScheduleRow): ScheduleRecord {
+    return {
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      deviceId: row.device_id,
+      profileId: row.profile_id,
+      timezone: row.timezone,
+      timeOfDay: row.time_of_day,
+      daysOfWeek: this.asNumberArray(row.days_of_week),
+      status: row.status,
+      lastRunAt: this.toIso(row.last_run_at),
+      nextRunAt: this.toIso(row.next_run_at),
+      createdAt: this.toIso(row.created_at) ?? new Date().toISOString(),
+      updatedAt: this.toIso(row.updated_at) ?? new Date().toISOString()
+    };
+  }
+
+  private scheduleRunFromRow(row: ScheduleRunRow): ScheduleRunRecord {
+    return {
+      id: row.id,
+      scheduleId: row.schedule_id,
+      startedAt: this.toIso(row.started_at) ?? new Date().toISOString(),
+      finishedAt: this.toIso(row.finished_at),
+      status: row.status,
+      error: row.error,
+      commandIds: this.asStringArray(row.command_ids)
+    };
+  }
+
   private asObject(value: CommandPayload | Record<string, unknown> | string): Record<string, unknown> {
     if (typeof value === "string") {
       return JSON.parse(value) as Record<string, unknown>;
     }
     return value;
+  }
+
+  private asNumberArray(value: number[] | string): number[] {
+    if (Array.isArray(value)) {
+      return value.map(Number);
+    }
+    if (value.trim().startsWith("[")) {
+      return (JSON.parse(value) as unknown[]).map(Number);
+    }
+    return value
+      .replace(/^\{|\}$/g, "")
+      .split(",")
+      .filter(Boolean)
+      .map(Number);
+  }
+
+  private asStringArray(value: string[] | string | null): string[] {
+    if (!value) {
+      return [];
+    }
+    if (Array.isArray(value)) {
+      return value.map(String);
+    }
+    if (value.trim().startsWith("[")) {
+      return (JSON.parse(value) as unknown[]).map(String);
+    }
+    return value
+      .replace(/^\{|\}$/g, "")
+      .split(",")
+      .filter(Boolean)
+      .map((item) => item.replace(/^"|"$/g, ""));
   }
 
   private toIso(value: Date | string | null): string | null {
@@ -930,7 +1215,7 @@ export class PostgresStore {
 
   private async uniqueId(
     seed: string,
-    table: "site_profiles" | "devices" | "wol_gateways"
+    table: "site_profiles" | "devices" | "wol_gateways" | "schedules"
   ): Promise<string> {
     const base =
       seed
@@ -951,7 +1236,7 @@ export class PostgresStore {
   }
 
   private async idExists(
-    table: "site_profiles" | "devices" | "wol_gateways",
+    table: "site_profiles" | "devices" | "wol_gateways" | "schedules",
     id: string
   ): Promise<boolean> {
     const result = await this.pool.query(`SELECT 1 FROM ${table} WHERE id = $1 LIMIT 1`, [id]);

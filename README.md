@@ -69,7 +69,7 @@ As credenciais dos perfis de radio sao salvas criptografadas com `ENCRYPTION_KEY
 `SITE_PROFILES_JSON` recebe uma lista de perfis. Cada perfil representa uma radio ou conta do site:
 
 ```json
-[{"id":"oliveira-fm","name":"Oliveira FM","siteUrl":"http://app.radios.srv.br","username":"","password":""}]
+[{"id":"oliveira-fm","name":"Oliveira FM","siteUrl":"https://www.oliveirafm.com.br/","username":"","password":""}]
 ```
 
 Com PostgreSQL ativo, essa lista funciona como seed inicial. Novas radios cadastradas pelo painel ficam salvas no banco.
@@ -90,6 +90,7 @@ DEVICE_ID=studio-01
 DEVICE_TOKEN=token-do-computador
 BROWSER_PROFILE_PATH=.cache/browser/studio-01
 HEADLESS=false
+SHUTDOWN_DRY_RUN=false
 ```
 
 ## Wake-on-LAN com ESP32
@@ -138,6 +139,20 @@ Documentacao completa: `docs/WINDOWS_AGENT_INSTALL.md`.
 - `screenshot`: captura uma imagem do navegador local.
 - `get_state`: retorna URL e titulo atual.
 - `click_action`: clica em uma acao mapeada em `ACTION_MAP_JSON`.
+- `play_radio`: tenta acionar o player da radio no navegador local.
+- `stop_playback`: pausa audio/video e tenta acionar botoes de pause/stop.
+- `shutdown`: agenda o desligamento do computador local pelo agente.
+
+Para validar o fluxo de desligamento sem desligar a maquina, configure `SHUTDOWN_DRY_RUN=true` no agente. Em producao, use `false`.
+
+## Agendamentos
+
+O painel possui a secao "Agendamentos" para criar rotinas de ligar e tocar ou desligar.
+
+- `Ligar e tocar`: envia Wake-on-LAN quando necessario, aguarda o agente ficar online, abre a radio e executa `play_radio`.
+- `Desligar`: envia `shutdown` para um computador online.
+
+O horario usa timezone configuravel por agendamento; o padrao recomendado para operacao local e `America/Sao_Paulo`.
 
 ## Simultaneidade
 

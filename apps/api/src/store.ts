@@ -8,6 +8,11 @@ import {
   type SafeDevice,
   type SafeSiteProfile,
   type SafeWolGateway,
+  type ScheduleInput,
+  type ScheduleRecord,
+  type ScheduleRunRecord,
+  type ScheduleRunStatus,
+  type ScheduleUpdate,
   type SiteProfile,
   type WolGateway,
   type WolGatewayCommand,
@@ -24,6 +29,8 @@ export class AppStore {
   private readonly devices = new Map<string, Device>();
   private readonly wolGateways = new Map<string, WolGateway>();
   private readonly commands = new Map<string, CommandRecord>();
+  private readonly schedules = new Map<string, ScheduleRecord>();
+  private readonly scheduleRuns = new Map<string, ScheduleRunRecord>();
 
   constructor(config: AppConfig) {
     for (const profile of config.profiles) {
@@ -58,7 +65,9 @@ export class AppStore {
       profiles: this.listSafeProfiles(),
       devices: this.listSafeDevices(),
       wolGateways: this.listSafeWolGateways(),
-      commands: this.listRecentCommands()
+      commands: this.listRecentCommands(),
+      schedules: this.listSchedules(),
+      scheduleRuns: this.listRecentScheduleRuns()
     };
   }
 
@@ -83,6 +92,134 @@ export class AppStore {
     return [...this.commands.values()]
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, 30);
+  }
+
+  listSchedules(): ScheduleRecord[] {
+    return [...this.schedules.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  listRecentScheduleRuns(limit = 30): ScheduleRunRecord[] {
+    return [...this.scheduleRuns.values()]
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+      .slice(0, limit);
+  }
+
+  listScheduleRuns(scheduleId: string, limit = 30): ScheduleRunRecord[] {
+    return [...this.scheduleRuns.values()]
+      .filter((run) => run.scheduleId === scheduleId)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+      .slice(0, limit);
+  }
+
+  getSchedule(scheduleId: string): ScheduleRecord | null {
+    return this.schedules.get(scheduleId) ?? null;
+  }
+
+  createSchedule(input: ScheduleInput & { nextRunAt: string | null }): ScheduleRecord {
+    const id = this.uniqueId(input.name, this.schedules);
+    const now = new Date().toISOString();
+    const schedule: ScheduleRecord = {
+      id,
+      name: input.name.trim(),
+      kind: input.kind,
+      deviceId: input.deviceId,
+      profileId: input.profileId ?? null,
+      timezone: input.timezone,
+      timeOfDay: input.timeOfDay,
+      daysOfWeek: input.daysOfWeek,
+      status: input.status ?? "enabled",
+      lastRunAt: null,
+      nextRunAt: input.nextRunAt,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.schedules.set(id, schedule);
+    return schedule;
+  }
+
+  updateSchedule(
+    scheduleId: string,
+    update: ScheduleUpdate & { nextRunAt?: string | null }
+  ): ScheduleRecord | null {
+    const schedule = this.getSchedule(scheduleId);
+    if (!schedule) {
+      return null;
+    }
+
+    const next: ScheduleRecord = {
+      ...schedule,
+      name: update.name?.trim() ?? schedule.name,
+      kind: update.kind ?? schedule.kind,
+      deviceId: update.deviceId ?? schedule.deviceId,
+      profileId: "profileId" in update ? update.profileId ?? null : schedule.profileId,
+      timezone: update.timezone ?? schedule.timezone,
+      timeOfDay: update.timeOfDay ?? schedule.timeOfDay,
+      daysOfWeek: update.daysOfWeek ?? schedule.daysOfWeek,
+      status: update.status ?? schedule.status,
+      nextRunAt: "nextRunAt" in update ? update.nextRunAt ?? null : schedule.nextRunAt,
+      updatedAt: new Date().toISOString()
+    };
+    this.schedules.set(scheduleId, next);
+    return next;
+  }
+
+  deleteSchedule(scheduleId: string): boolean {
+    return this.schedules.delete(scheduleId);
+  }
+
+  createScheduleRun(scheduleId: string): ScheduleRunRecord {
+    const now = new Date().toISOString();
+    const run: ScheduleRunRecord = {
+      id: randomUUID(),
+      scheduleId,
+      startedAt: now,
+      finishedAt: null,
+      status: "running",
+      error: null,
+      commandIds: []
+    };
+    this.scheduleRuns.set(run.id, run);
+    return run;
+  }
+
+  completeScheduleRun(
+    runId: string,
+    result: {
+      status: Exclude<ScheduleRunStatus, "running">;
+      error?: string | null;
+      commandIds: string[];
+    }
+  ): ScheduleRunRecord | null {
+    const run = this.scheduleRuns.get(runId);
+    if (!run) {
+      return null;
+    }
+
+    const next: ScheduleRunRecord = {
+      ...run,
+      finishedAt: new Date().toISOString(),
+      status: result.status,
+      error: result.error ?? null,
+      commandIds: result.commandIds
+    };
+    this.scheduleRuns.set(runId, next);
+    return next;
+  }
+
+  markScheduleTriggered(scheduleId: string, nextRunAt: string | null): ScheduleRecord | null {
+    const schedule = this.getSchedule(scheduleId);
+    if (!schedule) {
+      return null;
+    }
+
+    const next: ScheduleRecord = {
+      ...schedule,
+      lastRunAt: new Date().toISOString(),
+      nextRunAt,
+      updatedAt: new Date().toISOString()
+    };
+    this.schedules.set(scheduleId, next);
+    return next;
   }
 
   createProfile(input: {

@@ -59,8 +59,10 @@ export function startAgent(config: AgentConfig): void {
       }
 
       if (message.type === "command") {
+        console.log(`[agent] comando recebido: ${message.command.action} (${message.command.id})`);
         try {
           const result = await controller.execute(message.command, message.profile);
+          console.log(`[agent] comando ${message.command.action} status=${result.status ?? "succeeded"}`);
           send(socket, {
             type: "command_result",
             commandId: message.command.id,
@@ -70,6 +72,7 @@ export function startAgent(config: AgentConfig): void {
             state: result.state
           });
         } catch (error) {
+          console.error(`[agent] comando ${message.command.action} FAILED: ${(error as Error).message}`);
           send(socket, {
             type: "command_result",
             commandId: message.command.id,

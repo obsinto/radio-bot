@@ -5,7 +5,13 @@ import type { WebSocket } from "ws";
 import {
   type AgentToServerMessage,
   type ApiError,
+  type CommandAction,
   type CommandRequest,
+  type ScheduleInput,
+  type ScheduleKind,
+  type ScheduleRecord,
+  type ScheduleStatus,
+  type ScheduleUpdate,
   isCommandAction,
   type ServerToAgentMessage
 } from "@radio-bot/shared";
@@ -13,10 +19,22 @@ import { createSessionToken, verifySessionToken } from "./auth.js";
 import type { AppConfig } from "./config.js";
 import { AppStore } from "./store.js";
 import { PostgresStore } from "./postgres-store.js";
+import {
+  isValidTimeOfDay,
+  isValidTimezone,
+  nextRunAtForSchedule,
+  normalizeDaysOfWeek,
+  normalizeScheduleStatus
+} from "./schedule-time.js";
 
 type AgentConnection = {
   deviceId: string;
   socket: WebSocket;
+};
+
+type CommandCompletion = {
+  status: "succeeded" | "failed" | "waiting_confirmation";
+  error?: string;
 };
 
 function getBearerToken(request: FastifyRequest): string | null {
@@ -52,6 +70,15 @@ function isCommandBody(body: unknown): body is CommandRequest {
   const candidate = body as Partial<CommandRequest>;
   return isCommandAction(candidate.action) && typeof candidate.profileId === "string";
 }
+
+const profileConflictActions = new Set<CommandAction>([
+  "open_site",
+  "login",
+  "reload",
+  "click_action",
+  "confirm_open_here",
+  "play_radio"
+]);
 
 function isCreateProfileBody(body: unknown): body is {
   id?: string;
@@ -108,6 +135,57 @@ function isCreateWolGatewayBody(body: unknown): body is {
   );
 }
 
+function isScheduleKind(value: unknown): value is ScheduleKind {
+  return value === "power_on_start" || value === "shutdown";
+}
+
+function isScheduleStatus(value: unknown): value is ScheduleStatus {
+  return value === "enabled" || value === "disabled";
+}
+
+function isScheduleInputBody(body: unknown): body is ScheduleInput {
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+
+  const candidate = body as Record<string, unknown>;
+  return (
+    typeof candidate.name === "string" &&
+    isScheduleKind(candidate.kind) &&
+    typeof candidate.deviceId === "string" &&
+    (candidate.profileId === undefined ||
+      candidate.profileId === null ||
+      typeof candidate.profileId === "string") &&
+    typeof candidate.timezone === "string" &&
+    typeof candidate.timeOfDay === "string" &&
+    Array.isArray(candidate.daysOfWeek) &&
+    candidate.daysOfWeek.every((day) => typeof day === "number") &&
+    (candidate.status === undefined || isScheduleStatus(candidate.status))
+  );
+}
+
+function isScheduleUpdateBody(body: unknown): body is ScheduleUpdate {
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+
+  const candidate = body as Record<string, unknown>;
+  return (
+    (candidate.name === undefined || typeof candidate.name === "string") &&
+    (candidate.kind === undefined || isScheduleKind(candidate.kind)) &&
+    (candidate.deviceId === undefined || typeof candidate.deviceId === "string") &&
+    (candidate.profileId === undefined ||
+      candidate.profileId === null ||
+      typeof candidate.profileId === "string") &&
+    (candidate.timezone === undefined || typeof candidate.timezone === "string") &&
+    (candidate.timeOfDay === undefined || typeof candidate.timeOfDay === "string") &&
+    (candidate.daysOfWeek === undefined ||
+      (Array.isArray(candidate.daysOfWeek) &&
+        candidate.daysOfWeek.every((day) => typeof day === "number"))) &&
+    (candidate.status === undefined || isScheduleStatus(candidate.status))
+  );
+}
+
 function isWolGatewayResultBody(body: unknown): body is {
   status: "succeeded" | "failed";
   output?: Record<string, unknown>;
@@ -145,6 +223,8 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     ? await PostgresStore.create(config)
     : new AppStore(config);
   const agents = new Map<string, AgentConnection>();
+  const commandWaiters = new Map<string, (completion: CommandCompletion) => void>();
+  const runningScheduleIds = new Set<string>();
   const server = Fastify({
     logger: true
   });
@@ -155,6 +235,362 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]
   });
   await server.register(websocket);
+
+  function resolveCommandWaiter(commandId: string, completion: CommandCompletion): void {
+    const waiter = commandWaiters.get(commandId);
+    if (!waiter) {
+      return;
+    }
+    commandWaiters.delete(commandId);
+    waiter(completion);
+  }
+
+  function waitForCommandCompletion(commandId: string, timeoutMs: number): Promise<CommandCompletion> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        commandWaiters.delete(commandId);
+        resolve({
+          status: "failed",
+          error: "Tempo limite aguardando conclusao do comando."
+        });
+      }, timeoutMs);
+
+      commandWaiters.set(commandId, (completion) => {
+        clearTimeout(timeout);
+        resolve(completion);
+      });
+    });
+  }
+
+  async function waitForDeviceOnline(deviceId: string, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const device = await store.getDevice(deviceId);
+      if (device?.status === "online" && agents.has(deviceId)) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    throw new Error("Tempo limite aguardando o computador ficar online.");
+  }
+
+  async function sendAgentCommandAndWait(input: {
+    deviceId: string;
+    profile: Awaited<ReturnType<typeof store.getProfile>>;
+    action: CommandAction;
+    requestedBy: string;
+    payload?: Record<string, unknown>;
+    timeoutMs?: number;
+  }): Promise<string> {
+    if (!input.profile) {
+      throw new Error("Perfil de acesso nao encontrado para executar o comando.");
+    }
+
+    const device = await store.getDevice(input.deviceId);
+    const agent = agents.get(input.deviceId);
+    if (!device || !agent || device.status !== "online") {
+      throw new Error("Computador offline ou agente desconectado.");
+    }
+
+    const command = await store.createCommand({
+      action: input.action,
+      profileId: input.profile.id,
+      deviceId: input.deviceId,
+      requestedBy: input.requestedBy,
+      payload: input.payload
+    });
+    const completionPromise = waitForCommandCompletion(command.id, input.timeoutMs ?? 60000);
+
+    sendAgentMessage(agent.socket, {
+      type: "command",
+      command: {
+        id: command.id,
+        action: command.action,
+        profileId: command.profileId,
+        payload: command.payload
+      },
+      profile: input.profile
+    });
+    await store.markCommandSent(command.id);
+
+    const completion = await completionPromise;
+    if (completion.status !== "succeeded") {
+      throw new Error(completion.error ?? `Comando ${input.action} terminou com status ${completion.status}.`);
+    }
+
+    return command.id;
+  }
+
+  async function enqueuePowerOnCommand(input: {
+    deviceId: string;
+    profileId: string;
+    requestedBy: string;
+  }): Promise<string> {
+    const device = await store.getDevice(input.deviceId);
+    if (!device) {
+      throw new Error("Computador nao encontrado.");
+    }
+    if (!device.macAddress) {
+      throw new Error("Endereco MAC nao configurado para Wake on LAN.");
+    }
+    if (!device.wolGatewayId) {
+      throw new Error("Gateway Wake on LAN nao configurado para este computador.");
+    }
+    if (!(await store.getWolGateway(device.wolGatewayId))) {
+      throw new Error("Gateway Wake on LAN associado nao encontrado.");
+    }
+
+    const command = await store.createCommand({
+      action: "power_on",
+      profileId: input.profileId,
+      deviceId: input.deviceId,
+      requestedBy: input.requestedBy,
+      payload: {}
+    });
+    return command.id;
+  }
+
+  async function executionProfile(schedule: ScheduleRecord) {
+    if (schedule.profileId) {
+      return store.getProfile(schedule.profileId);
+    }
+
+    const device = await store.getDevice(schedule.deviceId);
+    const fallbackProfileId = device?.profileIds[0];
+    return fallbackProfileId ? store.getProfile(fallbackProfileId) : null;
+  }
+
+  async function runSchedule(schedule: ScheduleRecord, runId: string, requestedBy: string): Promise<void> {
+    const commandIds: string[] = [];
+    try {
+      if (schedule.kind === "power_on_start") {
+        if (!schedule.profileId) {
+          throw new Error("Agendamento de ligar e iniciar precisa de uma radio.");
+        }
+
+        const profile = await store.getProfile(schedule.profileId);
+        if (!profile) {
+          throw new Error("Radio do agendamento nao encontrada.");
+        }
+
+        const device = await store.getDevice(schedule.deviceId);
+        if (!device) {
+          throw new Error("Computador do agendamento nao encontrado.");
+        }
+
+        if (device.status !== "online" || !agents.has(device.id)) {
+          commandIds.push(
+            await enqueuePowerOnCommand({
+              deviceId: schedule.deviceId,
+              profileId: schedule.profileId,
+              requestedBy
+            })
+          );
+          await waitForDeviceOnline(schedule.deviceId, 180000);
+        }
+
+        commandIds.push(
+          await sendAgentCommandAndWait({
+            deviceId: schedule.deviceId,
+            profile,
+            action: profile.username && profile.password ? "login" : "open_site",
+            requestedBy
+          })
+        );
+        commandIds.push(
+          await sendAgentCommandAndWait({
+            deviceId: schedule.deviceId,
+            profile,
+            action: "play_radio",
+            requestedBy
+          })
+        );
+      } else {
+        const profile = await executionProfile(schedule);
+        commandIds.push(
+          await sendAgentCommandAndWait({
+            deviceId: schedule.deviceId,
+            profile,
+            action: "shutdown",
+            requestedBy,
+            payload: {
+              delaySeconds: 60,
+              force: false
+            },
+            timeoutMs: 15000
+          })
+        );
+      }
+
+      await store.completeScheduleRun(runId, {
+        status: "succeeded",
+        commandIds
+      });
+    } catch (error) {
+      await store.completeScheduleRun(runId, {
+        status: "failed",
+        error: (error as Error).message,
+        commandIds
+      });
+    } finally {
+      runningScheduleIds.delete(schedule.id);
+    }
+  }
+
+  async function startScheduleExecution(
+    schedule: ScheduleRecord,
+    requestedBy: string,
+    reschedule: boolean
+  ) {
+    if (runningScheduleIds.has(schedule.id)) {
+      throw new Error("Este agendamento ja esta em execucao.");
+    }
+
+    runningScheduleIds.add(schedule.id);
+    if (reschedule) {
+      await store.markScheduleTriggered(
+        schedule.id,
+        nextRunAtForSchedule(schedule, new Date(Date.now() + 60000))
+      );
+    }
+    const run = await store.createScheduleRun(schedule.id);
+    void runSchedule(schedule, run.id, requestedBy).catch((error: unknown) => {
+      server.log.error(error);
+      runningScheduleIds.delete(schedule.id);
+    });
+    return run;
+  }
+
+  async function runDueSchedules(): Promise<void> {
+    const now = Date.now();
+    const schedules = await store.listSchedules();
+    for (const schedule of schedules) {
+      if (
+        schedule.status === "enabled" &&
+        schedule.nextRunAt &&
+        new Date(schedule.nextRunAt).getTime() <= now &&
+        !runningScheduleIds.has(schedule.id)
+      ) {
+        await startScheduleExecution(schedule, "scheduler", true).catch((error: unknown) => {
+          server.log.error(error);
+        });
+      }
+    }
+  }
+
+  function normalizeScheduleInput(input: ScheduleInput): ScheduleInput & { nextRunAt: string | null } {
+    const status = normalizeScheduleStatus(input.status);
+    const normalized = {
+      ...input,
+      name: input.name.trim(),
+      deviceId: input.deviceId.trim(),
+      profileId: input.profileId?.trim() || null,
+      timezone: input.timezone.trim(),
+      timeOfDay: input.timeOfDay.trim(),
+      daysOfWeek: normalizeDaysOfWeek(input.daysOfWeek),
+      status
+    };
+
+    return {
+      ...normalized,
+      nextRunAt: nextRunAtForSchedule(normalized)
+    };
+  }
+
+  async function validateSchedule(input: ScheduleInput): Promise<{
+    statusCode: number;
+    error: ApiError;
+  } | null> {
+    if (!input.name.trim()) {
+      return {
+        statusCode: 400,
+        error: {
+          ok: false,
+          code: "INVALID_SCHEDULE_NAME",
+          message: "Nome do agendamento e obrigatorio."
+        }
+      };
+    }
+
+    if (!isValidTimezone(input.timezone)) {
+      return {
+        statusCode: 400,
+        error: {
+          ok: false,
+          code: "INVALID_TIMEZONE",
+          message: "Timezone invalida."
+        }
+      };
+    }
+
+    if (!isValidTimeOfDay(input.timeOfDay)) {
+      return {
+        statusCode: 400,
+        error: {
+          ok: false,
+          code: "INVALID_TIME_OF_DAY",
+          message: "Horario invalido. Use HH:mm."
+        }
+      };
+    }
+
+    if (normalizeDaysOfWeek(input.daysOfWeek).length === 0) {
+      return {
+        statusCode: 400,
+        error: {
+          ok: false,
+          code: "INVALID_DAYS_OF_WEEK",
+          message: "Escolha pelo menos um dia da semana."
+        }
+      };
+    }
+
+    const device = await store.getDevice(input.deviceId);
+    if (!device) {
+      return {
+        statusCode: 404,
+        error: {
+          ok: false,
+          code: "DEVICE_NOT_FOUND",
+          message: "Computador nao encontrado."
+        }
+      };
+    }
+
+    if (input.kind === "power_on_start" && !input.profileId) {
+      return {
+        statusCode: 400,
+        error: {
+          ok: false,
+          code: "PROFILE_REQUIRED",
+          message: "Agendamento de ligar e iniciar precisa de uma radio."
+        }
+      };
+    }
+
+    if (input.profileId) {
+      const validationError = await store.assertDeviceCanUseProfile(input.deviceId, input.profileId);
+      if (validationError) {
+        return {
+          statusCode: 422,
+          error: {
+            ok: false,
+            code: "PROFILE_NOT_ALLOWED",
+            message: validationError
+          }
+        };
+      }
+    }
+
+    return null;
+  }
+
+  const scheduleInterval = setInterval(() => {
+    void runDueSchedules().catch((error: unknown) => {
+      server.log.error(error);
+    });
+  }, 30000);
+  scheduleInterval.unref();
 
   server.decorateRequest("userEmail", null);
   server.addHook("preHandler", async (request, reply) => {
@@ -176,6 +612,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
   });
 
   server.addHook("onClose", async () => {
+    clearInterval(scheduleInterval);
     if ("close" in store) {
       await store.close();
     }
@@ -210,6 +647,141 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     ok: true,
     data: await store.getDashboardState()
   }));
+
+  server.get("/api/schedules", async () => ({
+    ok: true,
+    data: await store.listSchedules()
+  }));
+
+  server.post("/api/schedules", async (request, reply) => {
+    if (!isScheduleInputBody(request.body)) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "INVALID_SCHEDULE",
+        message: "Dados do agendamento invalidos."
+      });
+    }
+
+    const input = normalizeScheduleInput(request.body);
+    const validationError = await validateSchedule(input);
+    if (validationError) {
+      return apiError(reply, validationError.statusCode, validationError.error);
+    }
+
+    const schedule = await store.createSchedule(input);
+    return reply.status(201).send({
+      ok: true,
+      data: schedule
+    });
+  });
+
+  server.patch("/api/schedules/:scheduleId", async (request, reply) => {
+    const { scheduleId } = request.params as { scheduleId: string };
+    if (!isScheduleUpdateBody(request.body)) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "INVALID_SCHEDULE",
+        message: "Dados do agendamento invalidos."
+      });
+    }
+
+    const current = await store.getSchedule(scheduleId);
+    if (!current) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "SCHEDULE_NOT_FOUND",
+        message: "Agendamento nao encontrado."
+      });
+    }
+
+    const body = request.body;
+    const merged = normalizeScheduleInput({
+      name: body.name ?? current.name,
+      kind: body.kind ?? current.kind,
+      deviceId: body.deviceId ?? current.deviceId,
+      profileId:
+        "profileId" in body
+          ? body.profileId ?? null
+          : body.kind === "shutdown"
+            ? null
+            : current.profileId,
+      timezone: body.timezone ?? current.timezone,
+      timeOfDay: body.timeOfDay ?? current.timeOfDay,
+      daysOfWeek: body.daysOfWeek ?? current.daysOfWeek,
+      status: body.status ?? current.status
+    });
+    const validationError = await validateSchedule(merged);
+    if (validationError) {
+      return apiError(reply, validationError.statusCode, validationError.error);
+    }
+
+    const schedule = await store.updateSchedule(scheduleId, merged);
+    return reply.send({
+      ok: true,
+      data: schedule
+    });
+  });
+
+  server.delete("/api/schedules/:scheduleId", async (request, reply) => {
+    const { scheduleId } = request.params as { scheduleId: string };
+    const deleted = await store.deleteSchedule(scheduleId);
+    if (!deleted) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "SCHEDULE_NOT_FOUND",
+        message: "Agendamento nao encontrado."
+      });
+    }
+
+    return reply.send({
+      ok: true,
+      data: {
+        id: scheduleId
+      }
+    });
+  });
+
+  server.post("/api/schedules/:scheduleId/run-now", async (request, reply) => {
+    const { scheduleId } = request.params as { scheduleId: string };
+    const schedule = await store.getSchedule(scheduleId);
+    if (!schedule) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "SCHEDULE_NOT_FOUND",
+        message: "Agendamento nao encontrado."
+      });
+    }
+
+    try {
+      const run = await startScheduleExecution(schedule, request.userEmail ?? "unknown", false);
+      return reply.status(202).send({
+        ok: true,
+        data: run
+      });
+    } catch (error) {
+      return apiError(reply, 409, {
+        ok: false,
+        code: "SCHEDULE_ALREADY_RUNNING",
+        message: (error as Error).message
+      });
+    }
+  });
+
+  server.get("/api/schedules/:scheduleId/runs", async (request, reply) => {
+    const { scheduleId } = request.params as { scheduleId: string };
+    if (!(await store.getSchedule(scheduleId))) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "SCHEDULE_NOT_FOUND",
+        message: "Agendamento nao encontrado."
+      });
+    }
+
+    return reply.send({
+      ok: true,
+      data: await store.listScheduleRuns(scheduleId)
+    });
+  });
 
   server.post("/api/profiles", async (request, reply) => {
     if (!isCreateProfileBody(request.body)) {
@@ -427,8 +999,10 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
       });
     }
 
-    const activeDevices = await store.listDevicesUsingProfile(body.profileId, deviceId);
     const confirmations = Number(body.confirmations ?? 0);
+    const activeDevices = profileConflictActions.has(body.action)
+      ? await store.listDevicesUsingProfile(body.profileId, deviceId)
+      : [];
     if (activeDevices.length > 0 && confirmations < 2) {
       return apiError(reply, 409, {
         ok: false,
@@ -540,6 +1114,12 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
       output: request.body.output,
       error: request.body.error
     });
+    if (completed) {
+      resolveCommandWaiter(commandId, {
+        status: request.body.status,
+        error: request.body.error
+      });
+    }
 
     if (!completed) {
       return apiError(reply, 404, {
@@ -609,6 +1189,10 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
             output: message.output,
             error: message.error,
             screenshot: message.screenshot
+          });
+          resolveCommandWaiter(message.commandId, {
+            status: message.status,
+            error: message.error
           });
         }
       })().catch((error: unknown) => {

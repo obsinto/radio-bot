@@ -19,6 +19,7 @@ export type AgentConfig = {
   deviceToken: string;
   browserProfilePath: string;
   headless: boolean;
+  shutdownDryRun: boolean;
   actionMap: Record<string, string>;
 };
 
@@ -42,6 +43,7 @@ export function loadConfig(): AgentConfig {
     deviceToken: process.env.DEVICE_TOKEN ?? "change-studio-01-token",
     browserProfilePath: process.env.BROWSER_PROFILE_PATH ?? ".cache/browser/studio-01",
     headless: process.env.HEADLESS === "true",
+    shutdownDryRun: process.env.SHUTDOWN_DRY_RUN === "true",
     actionMap: parseActionMap()
   };
 }

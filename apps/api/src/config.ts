@@ -64,7 +64,7 @@ export function loadConfig(): AppConfig {
     {
       id: "oliveira-fm",
       name: "Oliveira FM",
-      siteUrl: process.env.SITE_URL ?? "http://app.radios.srv.br",
+      siteUrl: process.env.SITE_URL ?? "https://www.oliveirafm.com.br/",
       username: process.env.SITE_USERNAME ?? "",
       password: process.env.SITE_PASSWORD ?? ""
     }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  CalendarClock,
   Camera,
   CheckCircle2,
   CircleDot,
@@ -10,6 +11,7 @@ import {
   Monitor,
   KeyRound,
   Pencil,
+  Play,
   Plus,
   Power,
   PowerOff,
@@ -17,6 +19,8 @@ import {
   RefreshCw,
   Save,
   ShieldAlert,
+  Square,
+  Trash2,
   Wifi,
   WifiOff,
   X,
@@ -31,15 +35,21 @@ import type {
   SafeDevice,
   SafeSiteProfile,
   SafeWolGateway,
+  ScheduleKind,
+  ScheduleRecord,
   SitePrompt
 } from "@radio-bot/shared";
 import {
   createDevice,
   createProfile,
+  createSchedule,
   createWolGateway,
+  deleteSchedule,
   getState,
   login,
+  runScheduleNow,
   sendCommand,
+  updateSchedule,
   updateDeviceProfiles,
   updateDeviceWol
 } from "./api.js";
@@ -52,6 +62,9 @@ const actionLabels: Record<CommandAction, string> = {
   get_state: "Estado",
   click_action: "Clicar acao",
   confirm_open_here: "Abrir nesta janela",
+  play_radio: "Play",
+  stop_playback: "Stop",
+  shutdown: "Desligar",
   power_on: "Ligar computador"
 };
 
@@ -81,6 +94,14 @@ const commandButtons: CommandButton[] = [
     resolveAction: (profile) => (profile?.hasCredentials ? "login" : "open_site")
   },
   { key: "reload", icon: RefreshCw, resolveAction: () => "reload" },
+  { key: "play", icon: Play, resolveAction: () => "play_radio" },
+  { key: "stop", icon: Square, resolveAction: () => "stop_playback" },
+  {
+    key: "shutdown",
+    icon: Power,
+    label: "Desligar",
+    resolveAction: () => "shutdown"
+  },
   { key: "screenshot", icon: Camera, resolveAction: () => "screenshot" },
   { key: "get_state", icon: Activity, resolveAction: () => "get_state" }
 ];
@@ -119,8 +140,10 @@ export function App() {
   };
   const [pendingConflict, setPendingConflict] = useState<PendingConflict | null>(null);
   const [pendingSitePrompt, setPendingSitePrompt] = useState<PendingSitePrompt | null>(null);
+  const [shutdownConfirmOpen, setShutdownConfirmOpen] = useState(false);
   const [dismissedPromptIds, setDismissedPromptIds] = useState<string[]>([]);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [wolOpen, setWolOpen] = useState(false);
   const [editDevicesOpen, setEditDevicesOpen] = useState(false);
   const [expandedScreenshot, setExpandedScreenshot] = useState<string | null>(null);
@@ -196,7 +219,11 @@ export function App() {
     }
   }
 
-  async function runCommand(action: CommandAction, confirmations = 0) {
+  async function runCommand(
+    action: CommandAction,
+    confirmations = 0,
+    payload?: Record<string, unknown>
+  ) {
     if (!token || !selectedDeviceId || !selectedProfileId) {
       return;
     }
@@ -209,6 +236,7 @@ export function App() {
         deviceId: selectedDeviceId,
         profileId: selectedProfileId,
         action,
+        payload,
         confirmations
       });
       setPendingConflict(null);
@@ -341,6 +369,10 @@ export function App() {
             <Plus aria-hidden="true" />
             Adicionar
           </button>
+          <button className="admin-launch" type="button" onClick={() => setSchedulesOpen(true)}>
+            <CalendarClock aria-hidden="true" />
+            Agendamentos
+          </button>
           <button className="admin-launch" type="button" onClick={() => setWolOpen(true)}>
             <Zap aria-hidden="true" />
             Configurar Wake on LAN
@@ -382,7 +414,13 @@ export function App() {
                   className="command-button"
                   type="button"
                   disabled={disabled}
-                  onClick={() => runCommand(action)}
+                  onClick={() => {
+                    if (action === "shutdown") {
+                      setShutdownConfirmOpen(true);
+                      return;
+                    }
+                    void runCommand(action);
+                  }}
                   title={label}
                 >
                   <Icon aria-hidden="true" />
@@ -451,6 +489,33 @@ export function App() {
         />
       ) : null}
 
+      {shutdownConfirmOpen ? (
+        <ShutdownModal
+          device={selectedDevice}
+          onCancel={() => setShutdownConfirmOpen(false)}
+          onConfirm={() => {
+            setShutdownConfirmOpen(false);
+            void runCommand("shutdown", 0, {
+              delaySeconds: 60,
+              force: false
+            });
+          }}
+        />
+      ) : null}
+
+      {schedulesOpen ? (
+        <SchedulesModal
+          token={token}
+          schedules={dashboard?.schedules ?? []}
+          runs={dashboard?.scheduleRuns ?? []}
+          devices={dashboard?.devices ?? []}
+          profiles={dashboard?.profiles ?? []}
+          onClose={() => setSchedulesOpen(false)}
+          onNotice={setMessage}
+          onRefresh={async () => setDashboard(await getState(token))}
+        />
+      ) : null}
+
       {wolOpen ? (
         <WolModal
           token={token}
@@ -481,6 +546,303 @@ export function App() {
       ) : null}
     </main>
   );
+}
+
+const weekDays = [
+  { value: 0, label: "Dom" },
+  { value: 1, label: "Seg" },
+  { value: 2, label: "Ter" },
+  { value: 3, label: "Qua" },
+  { value: 4, label: "Qui" },
+  { value: 5, label: "Sex" },
+  { value: 6, label: "Sab" }
+];
+
+function SchedulesModal({
+  token,
+  schedules,
+  runs,
+  devices,
+  profiles,
+  onClose,
+  onNotice,
+  onRefresh
+}: {
+  token: string;
+  schedules: ScheduleRecord[];
+  runs: DashboardState["scheduleRuns"];
+  devices: SafeDevice[];
+  profiles: SafeSiteProfile[];
+  onClose: () => void;
+  onNotice: (message: string | null, tone?: "error" | "success") => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<ScheduleKind>("power_on_start");
+  const [deviceId, setDeviceId] = useState(devices[0]?.id ?? "");
+  const [profileId, setProfileId] = useState(profiles[0]?.id ?? "");
+  const [timeOfDay, setTimeOfDay] = useState("07:00");
+  const [timezone, setTimezone] = useState("America/Sao_Paulo");
+  const [daysOfWeek, setDaysOfWeek] = useState([1, 2, 3, 4, 5]);
+  const [creating, setCreating] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const selectedDevice = devices.find((device) => device.id === deviceId) ?? null;
+  const allowedProfiles = selectedDevice
+    ? profiles.filter((profile) => selectedDevice.profileIds.includes(profile.id))
+    : profiles;
+  const effectiveProfileId = allowedProfiles.some((profile) => profile.id === profileId)
+    ? profileId
+    : allowedProfiles[0]?.id ?? "";
+
+  function toggleDay(day: number) {
+    setDaysOfWeek((current) =>
+      current.includes(day)
+        ? current.filter((item) => item !== day)
+        : [...current, day].sort((a, b) => a - b)
+    );
+  }
+
+  async function submitSchedule(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCreating(true);
+    try {
+      await createSchedule({
+        token,
+        schedule: {
+          name,
+          kind,
+          deviceId,
+          profileId: kind === "power_on_start" ? effectiveProfileId : null,
+          timezone,
+          timeOfDay,
+          daysOfWeek,
+          status: "enabled"
+        }
+      });
+      setName("");
+      onNotice("Agendamento criado.", "success");
+      await onRefresh();
+    } catch (error) {
+      onNotice((error as ApiError).message ?? "Nao foi possivel criar o agendamento.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function toggleSchedule(schedule: ScheduleRecord) {
+    setBusyId(schedule.id);
+    try {
+      await updateSchedule({
+        token,
+        scheduleId: schedule.id,
+        schedule: {
+          status: schedule.status === "enabled" ? "disabled" : "enabled"
+        }
+      });
+      await onRefresh();
+    } catch (error) {
+      onNotice((error as ApiError).message ?? "Nao foi possivel atualizar o agendamento.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function runNow(scheduleId: string) {
+    setBusyId(scheduleId);
+    try {
+      await runScheduleNow({ token, scheduleId });
+      onNotice("Agendamento enviado para execucao.", "success");
+      await onRefresh();
+    } catch (error) {
+      onNotice((error as ApiError).message ?? "Nao foi possivel executar agora.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function remove(scheduleId: string) {
+    setBusyId(scheduleId);
+    try {
+      await deleteSchedule({ token, scheduleId });
+      onNotice("Agendamento removido.", "success");
+      await onRefresh();
+    } catch (error) {
+      onNotice((error as ApiError).message ?? "Nao foi possivel remover.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section
+        className="modal admin-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="schedules-title"
+      >
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Automacao</p>
+            <h2 id="schedules-title">Agendamentos</h2>
+          </div>
+          <button className="icon-button modal-close" type="button" onClick={onClose} title="Fechar">
+            <X aria-hidden="true" />
+          </button>
+        </div>
+
+        <form className="mini-form wol-gateway-form" onSubmit={submitSchedule}>
+          <label>
+            Nome
+            <input
+              required
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Oliveira FM manha"
+            />
+          </label>
+          <label>
+            Tipo
+            <select value={kind} onChange={(event) => setKind(event.target.value as ScheduleKind)}>
+              <option value="power_on_start">Ligar e tocar</option>
+              <option value="shutdown">Desligar</option>
+            </select>
+          </label>
+          <label>
+            Computador
+            <select value={deviceId} onChange={(event) => setDeviceId(event.target.value)} required>
+              {devices.map((device) => (
+                <option key={device.id} value={device.id}>
+                  {device.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {kind === "power_on_start" ? (
+            <label>
+              Radio
+              <select
+                value={effectiveProfileId}
+                onChange={(event) => setProfileId(event.target.value)}
+                required
+              >
+                {allowedProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <label>
+            Horario
+            <input
+              required
+              type="time"
+              value={timeOfDay}
+              onChange={(event) => setTimeOfDay(event.target.value)}
+            />
+          </label>
+          <label>
+            Timezone
+            <input
+              required
+              value={timezone}
+              onChange={(event) => setTimezone(event.target.value)}
+            />
+          </label>
+          <div className="profile-checkbox-list">
+            {weekDays.map((day) => (
+              <label className="profile-checkbox" key={day.value}>
+                <input
+                  type="checkbox"
+                  checked={daysOfWeek.includes(day.value)}
+                  onChange={() => toggleDay(day.value)}
+                />
+                <span>{day.label}</span>
+              </label>
+            ))}
+          </div>
+          <button
+            className="small-action"
+            type="submit"
+            disabled={creating || devices.length === 0 || (kind === "power_on_start" && !effectiveProfileId)}
+          >
+            <Plus aria-hidden="true" />
+            {creating ? "Criando" : "Criar"}
+          </button>
+        </form>
+
+        <div className="wol-grid">
+          {schedules.length === 0 ? <p className="muted">Nenhum agendamento cadastrado.</p> : null}
+          {schedules.map((schedule) => {
+            const device = devices.find((item) => item.id === schedule.deviceId);
+            const profile = profiles.find((item) => item.id === schedule.profileId);
+            const lastRun = runs.find((run) => run.scheduleId === schedule.id);
+            return (
+              <article className="wol-row" key={schedule.id}>
+                <header>
+                  <strong>{schedule.name}</strong>
+                  <span>
+                    {schedule.kind === "power_on_start" ? "Ligar e tocar" : "Desligar"} -{" "}
+                    {schedule.status === "enabled" ? "ativo" : "inativo"}
+                  </span>
+                </header>
+                <p className="muted">
+                  {device?.name ?? schedule.deviceId}
+                  {profile ? ` - ${profile.name}` : ""} - {schedule.timeOfDay} -{" "}
+                  {schedule.daysOfWeek
+                    .map((day) => weekDays.find((item) => item.value === day)?.label)
+                    .filter(Boolean)
+                    .join(", ")}
+                </p>
+                <p className="muted">
+                  Proxima: {formatDateTime(schedule.nextRunAt)} | Ultima:{" "}
+                  {lastRun ? `${lastRun.status} em ${formatDateTime(lastRun.startedAt)}` : "-"}
+                </p>
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    disabled={busyId === schedule.id}
+                    onClick={() => toggleSchedule(schedule)}
+                  >
+                    {schedule.status === "enabled" ? "Desativar" : "Ativar"}
+                  </button>
+                  <button
+                    type="button"
+                    className="small-action"
+                    disabled={busyId === schedule.id}
+                    onClick={() => runNow(schedule.id)}
+                  >
+                    <Play aria-hidden="true" />
+                    Executar agora
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    disabled={busyId === schedule.id}
+                    onClick={() => remove(schedule.id)}
+                  >
+                    <Trash2 aria-hidden="true" />
+                    Excluir
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+  return new Date(value).toLocaleString("pt-BR");
 }
 
 function WolModal({
@@ -878,6 +1240,14 @@ function AdminForms({
     token: string;
   } | null>(null);
 
+  function fillOliveiraPreset() {
+    setProfileName("Oliveira FM");
+    setProfileMode("direct");
+    setSiteUrl("https://www.oliveirafm.com.br/");
+    setUsername("");
+    setPassword("");
+  }
+
   async function submitProfile(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
@@ -937,6 +1307,10 @@ function AdminForms({
         <div className="admin-modal-grid">
           <form className="mini-form" onSubmit={submitProfile}>
             <strong>Radio</strong>
+            <button className="small-action" type="button" onClick={fillOliveiraPreset}>
+              <Radio aria-hidden="true" />
+              Oliveira FM
+            </button>
             <div className="segmented-control" role="radiogroup" aria-label="Tipo de acesso">
               <button
                 type="button"
@@ -1170,6 +1544,39 @@ function SitePromptModal({
           </button>
           <button className="danger-button" type="button" onClick={onConfirm}>
             {prompt.confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ShutdownModal({
+  device,
+  onCancel,
+  onConfirm
+}: {
+  device: SafeDevice | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="shutdown-title">
+        <div className="modal-icon">
+          <Power aria-hidden="true" />
+        </div>
+        <h2 id="shutdown-title">Desligar computador</h2>
+        <p>
+          O comando vai desligar {device?.name ?? "o computador selecionado"} em aproximadamente
+          1 minuto. O agente local precisa estar online e ter permissao no sistema operacional.
+        </p>
+        <div className="modal-actions">
+          <button className="ghost-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="danger-button" type="button" onClick={onConfirm}>
+            Desligar
           </button>
         </div>
       </section>

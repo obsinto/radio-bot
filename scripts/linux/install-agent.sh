@@ -99,17 +99,36 @@ mkdir -p "$UNIT_DIR"
 UNIT_FILE="$UNIT_DIR/$SERVICE_NAME.service"
 
 echo "[systemd] gerando $UNIT_FILE"
+
+display_env=""
+unit_after="network-online.target"
+unit_wants="network-online.target"
+if [[ "$HEADLESS" == "false" ]]; then
+  detected_display="${DISPLAY:-:0}"
+  detected_xauthority="${XAUTHORITY:-/run/user/$(id -u)/gdm/Xauthority}"
+  detected_wayland="${WAYLAND_DISPLAY:-}"
+  display_env="Environment=DISPLAY=$detected_display
+Environment=XAUTHORITY=$detected_xauthority"
+  if [[ -n "$detected_wayland" ]]; then
+    display_env="$display_env
+Environment=WAYLAND_DISPLAY=$detected_wayland"
+  fi
+  unit_after="$unit_after graphical-session.target"
+  unit_wants="$unit_wants graphical-session.target"
+fi
+
 cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=Radio BOT Agent ($DEVICE_ID)
-After=network-online.target
-Wants=network-online.target
+After=$unit_after
+Wants=$unit_wants
 
 [Service]
 Type=simple
 WorkingDirectory=$REPO_DIR
 EnvironmentFile=$ENV_FILE
 Environment=PATH=$NODE_BIN_DIR:/usr/local/bin:/usr/bin:/bin
+$display_env
 ExecStart=$NPM_BIN run start -w @radio-bot/agent
 Restart=always
 RestartSec=5
