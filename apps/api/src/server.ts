@@ -100,6 +100,24 @@ function isCreateProfileBody(body: unknown): body is {
   );
 }
 
+function isUpdateProfileBody(body: unknown): body is {
+  name?: string;
+  siteUrl?: string;
+  username?: string;
+  password?: string;
+} {
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+  const candidate = body as Record<string, unknown>;
+  return (
+    (candidate.name === undefined || typeof candidate.name === "string") &&
+    (candidate.siteUrl === undefined || typeof candidate.siteUrl === "string") &&
+    (candidate.username === undefined || typeof candidate.username === "string") &&
+    (candidate.password === undefined || typeof candidate.password === "string")
+  );
+}
+
 function isCreateDeviceBody(body: unknown): body is {
   id?: string;
   name: string;
@@ -119,6 +137,20 @@ function isCreateDeviceBody(body: unknown): body is {
   );
 }
 
+function isUpdateDeviceBody(body: unknown): body is {
+  name?: string;
+  location?: string;
+} {
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+  const candidate = body as Record<string, unknown>;
+  return (
+    (candidate.name === undefined || typeof candidate.name === "string") &&
+    (candidate.location === undefined || typeof candidate.location === "string")
+  );
+}
+
 function isCreateWolGatewayBody(body: unknown): body is {
   id?: string;
   name: string;
@@ -133,6 +165,13 @@ function isCreateWolGatewayBody(body: unknown): body is {
     typeof candidate.location === "string" &&
     (candidate.id === undefined || typeof candidate.id === "string")
   );
+}
+
+function isUpdateWolGatewayBody(body: unknown): body is {
+  name?: string;
+  location?: string;
+} {
+  return isUpdateDeviceBody(body);
 }
 
 function isScheduleKind(value: unknown): value is ScheduleKind {
@@ -799,6 +838,38 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     });
   });
 
+  server.patch("/api/profiles/:profileId", async (request, reply) => {
+    const { profileId } = request.params as { profileId: string };
+    if (!isUpdateProfileBody(request.body)) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "INVALID_PROFILE",
+        message: "Dados da radio invalidos."
+      });
+    }
+
+    const body = request.body;
+    const profile = await store.updateProfile(profileId, {
+      name: body.name,
+      siteUrl: body.siteUrl,
+      username: body.username,
+      password: body.password
+    });
+
+    if (!profile) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "PROFILE_NOT_FOUND",
+        message: "Radio nao encontrada."
+      });
+    }
+
+    return reply.send({
+      ok: true,
+      data: profile
+    });
+  });
+
   server.patch("/api/devices/:deviceId/wol", async (request, reply) => {
     const { deviceId } = request.params as { deviceId: string };
     const body = request.body as
@@ -880,6 +951,31 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     });
   });
 
+  server.patch("/api/wol-gateways/:gatewayId", async (request, reply) => {
+    const { gatewayId } = request.params as { gatewayId: string };
+    if (!isUpdateWolGatewayBody(request.body)) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "INVALID_WOL_GATEWAY",
+        message: "Dados do gateway ESP32 invalidos."
+      });
+    }
+
+    const gateway = await store.updateWolGateway(gatewayId, request.body);
+    if (!gateway) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "WOL_GATEWAY_NOT_FOUND",
+        message: "Gateway ESP32 nao encontrado."
+      });
+    }
+
+    return reply.send({
+      ok: true,
+      data: gateway
+    });
+  });
+
   server.post("/api/devices", async (request, reply) => {
     if (!isCreateDeviceBody(request.body)) {
       return apiError(reply, 400, {
@@ -891,6 +987,31 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
 
     const device = await store.createDevice(request.body);
     return reply.status(201).send({
+      ok: true,
+      data: device
+    });
+  });
+
+  server.patch("/api/devices/:deviceId", async (request, reply) => {
+    const { deviceId } = request.params as { deviceId: string };
+    if (!isUpdateDeviceBody(request.body)) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "INVALID_DEVICE",
+        message: "Dados do computador invalidos."
+      });
+    }
+
+    const device = await store.updateDevice(deviceId, request.body);
+    if (!device) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "DEVICE_NOT_FOUND",
+        message: "Computador nao encontrado."
+      });
+    }
+
+    return reply.send({
       ok: true,
       data: device
     });

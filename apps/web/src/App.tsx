@@ -18,6 +18,7 @@ import {
   Radio,
   RefreshCw,
   Save,
+  Settings,
   ShieldAlert,
   Square,
   Trash2,
@@ -53,6 +54,7 @@ import {
   updateDeviceProfiles,
   updateDeviceWol
 } from "./api.js";
+import { SettingsModal } from "./SettingsModal.js";
 
 const actionLabels: Record<CommandAction, string> = {
   open_site: "Abrir site",
@@ -122,6 +124,9 @@ type PendingSitePrompt = {
 
 type ProfileMode = "direct" | "login";
 
+const palmeirinhaUrl =
+  "https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA";
+
 function storedToken(): string | null {
   return window.localStorage.getItem("radio-bot-token");
 }
@@ -142,10 +147,7 @@ export function App() {
   const [pendingSitePrompt, setPendingSitePrompt] = useState<PendingSitePrompt | null>(null);
   const [shutdownConfirmOpen, setShutdownConfirmOpen] = useState(false);
   const [dismissedPromptIds, setDismissedPromptIds] = useState<string[]>([]);
-  const [adminOpen, setAdminOpen] = useState(false);
-  const [schedulesOpen, setSchedulesOpen] = useState(false);
-  const [wolOpen, setWolOpen] = useState(false);
-  const [editDevicesOpen, setEditDevicesOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [expandedScreenshot, setExpandedScreenshot] = useState<string | null>(null);
 
   const selectedDevice = useMemo(
@@ -306,12 +308,20 @@ export function App() {
           <form onSubmit={submitLogin} className="login-form">
             <label>
               Email
-              <input value={email} onChange={(event) => setEmail(event.target.value)} />
+              <input
+                type="email"
+                name="email"
+                autoComplete="username"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
             </label>
             <label>
               Senha
               <input
                 type="password"
+                name="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
               />
@@ -334,9 +344,19 @@ export function App() {
           <Radio aria-hidden="true" />
           <span>Radio BOT</span>
         </div>
-        <button className="icon-button" type="button" onClick={logout} title="Sair">
-          <Power aria-hidden="true" />
-        </button>
+        <div className="topbar-actions">
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            title="Configuracoes"
+          >
+            <Settings aria-hidden="true" />
+          </button>
+          <button className="icon-button" type="button" onClick={logout} title="Sair">
+            <Power aria-hidden="true" />
+          </button>
+        </div>
       </header>
 
       <section className="workspace">
@@ -365,21 +385,9 @@ export function App() {
             ))}
           </div>
 
-          <button className="admin-launch" type="button" onClick={() => setAdminOpen(true)}>
-            <Plus aria-hidden="true" />
-            Adicionar
-          </button>
-          <button className="admin-launch" type="button" onClick={() => setSchedulesOpen(true)}>
-            <CalendarClock aria-hidden="true" />
-            Agendamentos
-          </button>
-          <button className="admin-launch" type="button" onClick={() => setWolOpen(true)}>
-            <Zap aria-hidden="true" />
-            Configurar Wake on LAN
-          </button>
-          <button className="admin-launch" type="button" onClick={() => setEditDevicesOpen(true)}>
-            <Pencil aria-hidden="true" />
-            Editar computadores
+          <button className="admin-launch" type="button" onClick={() => setSettingsOpen(true)}>
+            <Settings aria-hidden="true" />
+            Configuracoes
           </button>
         </aside>
 
@@ -465,11 +473,11 @@ export function App() {
         />
       ) : null}
 
-      {adminOpen ? (
-        <AdminForms
+      {settingsOpen && dashboard ? (
+        <SettingsModal
           token={token}
-          profiles={dashboard?.profiles ?? []}
-          onClose={() => setAdminOpen(false)}
+          dashboard={dashboard}
+          onClose={() => setSettingsOpen(false)}
           onNotice={setMessage}
           onRefresh={async () => setDashboard(await getState(token))}
         />
@@ -500,41 +508,6 @@ export function App() {
               force: false
             });
           }}
-        />
-      ) : null}
-
-      {schedulesOpen ? (
-        <SchedulesModal
-          token={token}
-          schedules={dashboard?.schedules ?? []}
-          runs={dashboard?.scheduleRuns ?? []}
-          devices={dashboard?.devices ?? []}
-          profiles={dashboard?.profiles ?? []}
-          onClose={() => setSchedulesOpen(false)}
-          onNotice={setMessage}
-          onRefresh={async () => setDashboard(await getState(token))}
-        />
-      ) : null}
-
-      {wolOpen ? (
-        <WolModal
-          token={token}
-          devices={dashboard?.devices ?? []}
-          gateways={dashboard?.wolGateways ?? []}
-          onClose={() => setWolOpen(false)}
-          onNotice={setMessage}
-          onRefresh={async () => setDashboard(await getState(token))}
-        />
-      ) : null}
-
-      {editDevicesOpen ? (
-        <DeviceProfilesModal
-          token={token}
-          devices={dashboard?.devices ?? []}
-          profiles={dashboard?.profiles ?? []}
-          onClose={() => setEditDevicesOpen(false)}
-          onNotice={setMessage}
-          onRefresh={async () => setDashboard(await getState(token))}
         />
       ) : null}
 
@@ -699,7 +672,7 @@ function SchedulesModal({
               required
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Oliveira FM manha"
+              placeholder="Palmeirinha FM manha"
             />
           </label>
           <label>
@@ -1229,7 +1202,7 @@ function AdminForms({
 }) {
   const [profileName, setProfileName] = useState("");
   const [profileMode, setProfileMode] = useState<ProfileMode>("direct");
-  const [siteUrl, setSiteUrl] = useState("http://app.radios.srv.br");
+  const [siteUrl, setSiteUrl] = useState(palmeirinhaUrl);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [deviceName, setDeviceName] = useState("");
@@ -1240,10 +1213,10 @@ function AdminForms({
     token: string;
   } | null>(null);
 
-  function fillOliveiraPreset() {
-    setProfileName("Oliveira FM");
+  function fillPalmeirinhaPreset() {
+    setProfileName("Palmeirinha FM");
     setProfileMode("direct");
-    setSiteUrl("https://www.oliveirafm.com.br/");
+    setSiteUrl(palmeirinhaUrl);
     setUsername("");
     setPassword("");
   }
@@ -1307,9 +1280,9 @@ function AdminForms({
         <div className="admin-modal-grid">
           <form className="mini-form" onSubmit={submitProfile}>
             <strong>Radio</strong>
-            <button className="small-action" type="button" onClick={fillOliveiraPreset}>
+            <button className="small-action" type="button" onClick={fillPalmeirinhaPreset}>
               <Radio aria-hidden="true" />
-              Oliveira FM
+              Palmeirinha FM
             </button>
             <div className="segmented-control" role="radiogroup" aria-label="Tipo de acesso">
               <button

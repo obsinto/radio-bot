@@ -241,6 +241,26 @@ export class AppStore {
     return toSafeProfile(profile);
   }
 
+  updateProfile(
+    profileId: string,
+    update: Partial<Pick<SiteProfile, "name" | "siteUrl" | "username" | "password">>
+  ): SafeSiteProfile | null {
+    const profile = this.profiles.get(profileId);
+    if (!profile) {
+      return null;
+    }
+
+    const next: SiteProfile = {
+      ...profile,
+      name: update.name?.trim() ?? profile.name,
+      siteUrl: update.siteUrl?.trim() ?? profile.siteUrl,
+      username: update.username?.trim() ?? profile.username,
+      password: update.password ?? profile.password
+    };
+    this.profiles.set(profileId, next);
+    return toSafeProfile(next);
+  }
+
   createDevice(input: {
     id?: string;
     name: string;
@@ -272,6 +292,20 @@ export class AppStore {
     };
   }
 
+  updateDevice(
+    deviceId: string,
+    update: Partial<Pick<Device, "name" | "location">>
+  ): SafeDevice | null {
+    const device = this.getDevice(deviceId);
+    if (!device) {
+      return null;
+    }
+
+    device.name = update.name?.trim() ?? device.name;
+    device.location = update.location?.trim() ?? device.location;
+    return toSafeDevice(device);
+  }
+
   createWolGateway(input: {
     id?: string;
     name: string;
@@ -292,6 +326,20 @@ export class AppStore {
       ...toSafeWolGateway(gateway),
       token
     };
+  }
+
+  updateWolGateway(
+    gatewayId: string,
+    update: Partial<Pick<WolGateway, "name" | "location">>
+  ): SafeWolGateway | null {
+    const gateway = this.getWolGateway(gatewayId);
+    if (!gateway) {
+      return null;
+    }
+
+    gateway.name = update.name?.trim() ?? gateway.name;
+    gateway.location = update.location?.trim() ?? gateway.location;
+    return toSafeWolGateway(gateway);
   }
 
   getProfile(profileId: string): SiteProfile | null {

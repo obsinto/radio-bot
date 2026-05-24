@@ -59,12 +59,15 @@ export type AppConfig = {
   wolGateways: WolGatewaySeed[];
 };
 
+const defaultRadioSiteUrl =
+  "https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA";
+
 export function loadConfig(): AppConfig {
   const profiles = parseJsonEnv<SiteProfile[]>("SITE_PROFILES_JSON") ?? [
     {
-      id: "oliveira-fm",
-      name: "Oliveira FM",
-      siteUrl: process.env.SITE_URL ?? "https://www.oliveirafm.com.br/",
+      id: "palmeirinha-fm",
+      name: "Palmeirinha FM",
+      siteUrl: process.env.SITE_URL ?? defaultRadioSiteUrl,
       username: process.env.SITE_USERNAME ?? "",
       password: process.env.SITE_PASSWORD ?? ""
     }

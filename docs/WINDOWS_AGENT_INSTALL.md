@@ -25,7 +25,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\windows\install-agent.ps1 `
   -ServerUrl "wss://api.seu-dominio.com/agent" `
   -DeviceId "studio-01" `
-  -DeviceToken "token-gerado-no-painel"
+  -DeviceToken "token-gerado-no-painel" `
+  -ShutdownDryRun "false"
 ```
 
 Por padrao, o instalador usa:
@@ -34,6 +35,9 @@ Por padrao, o instalador usa:
 - Tarefa Agendada: `RadioBOTAgent`
 - Perfil Chromium: `C:\RadioBOT\browser-profile`
 - Browser visivel: `HEADLESS=false`
+- Desligamento real: `SHUTDOWN_DRY_RUN=false`
+
+Para validar sem permitir desligamento da maquina, instale com `-ShutdownDryRun "true"`.
 
 ## Instalacao Local Para Teste
 
@@ -53,6 +57,30 @@ Por padrao, o instalador usa:
 - Compila `@radio-bot/shared` e `@radio-bot/agent`.
 - Cria uma Tarefa Agendada no logon do usuario atual.
 - Inicia o agente imediatamente.
+
+Se `npm install`, Playwright ou build falhar, o instalador para com erro e nao segue silenciosamente.
+
+## Validacao
+
+Confira se a tarefa existe:
+
+```powershell
+Get-ScheduledTask -TaskName RadioBOTAgent
+```
+
+Acompanhe os logs:
+
+```powershell
+Get-Content C:\RadioBOT\logs\agent.log -Tail 80 -Wait
+```
+
+Esperado no log:
+
+```text
+[agent] conectado como studio-01
+```
+
+No painel, o computador deve aparecer como online em ate alguns segundos.
 
 ## Logs
 

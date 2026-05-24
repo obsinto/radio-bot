@@ -37,8 +37,8 @@ JWT_SECRET=troque-por-uma-chave-longa
 ENCRYPTION_KEY=troque-por-uma-chave-longa-de-32-ou-mais-caracteres
 ADMIN_EMAIL=admin@radio.local
 ADMIN_PASSWORD=troque-esta-senha
-SITE_PROFILES_JSON=[{"id":"oliveira-fm","name":"Oliveira FM","siteUrl":"https://site-da-radio.example","username":"","password":""}]
-DEVICES_JSON=[{"id":"studio-01","name":"Studio 01","location":"Local principal","token":"troque-token-agent","profileIds":["oliveira-fm"],"wolGatewayId":"esp-studio-01"}]
+SITE_PROFILES_JSON=[{"id":"palmeirinha-fm","name":"Palmeirinha FM","siteUrl":"https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA","username":"","password":""}]
+DEVICES_JSON=[{"id":"studio-01","name":"Studio 01","location":"Local principal","token":"troque-token-agent","profileIds":["palmeirinha-fm"],"wolGatewayId":"esp-studio-01"}]
 WOL_GATEWAYS_JSON=[{"id":"esp-studio-01","name":"Gateway ESP32 Studio 01","location":"Local principal","token":"troque-token-esp32"}]
 ```
 

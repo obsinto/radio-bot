@@ -1,4 +1,4 @@
-# Plano de Implementacao - Agendamento, Stop e Oliveira FM
+# Plano de Implementacao - Agendamento, Stop e Radios
 
 ## Objetivo
 
@@ -7,7 +7,7 @@ Adicionar ao Radio BOT recursos para:
 - Ligar um computador em horario configurado e iniciar automaticamente a radio.
 - Desligar um computador em horario configurado.
 - Parar a reproducao que estiver ativa no navegador controlado pelo agente.
-- Cadastrar/usar a Oliveira FM em `https://www.oliveirafm.com.br/` e acionar o play do player.
+- Cadastrar/usar a Palmeirinha FM pelo link direto do player e manter Oliveira FM como opcao manual de `Play`.
 
 ## Status de implementacao
 
@@ -24,7 +24,7 @@ Adicionar ao Radio BOT recursos para:
 - [x] Implementar rotina agendada `power_on_start`.
 - [x] Implementar rotina agendada `shutdown`.
 - [x] Adicionar UI de agendamentos no painel.
-- [x] Adicionar preset/documentacao da Oliveira FM.
+- [x] Adicionar preset/documentacao da radio principal.
 - [x] Validar manualmente o player real da Oliveira FM.
 - [x] Rodar `npm run typecheck` apos a primeira etapa de comandos.
 - [x] Rodar `npm run typecheck` apos backend, UI e docs de agendamento.
@@ -58,7 +58,8 @@ O plano abaixo parte da arquitetura atual e evita executar comandos de sistema a
 - "Abrir automaticamente tudo" significa executar uma sequencia apos o computador ficar online: ligar via WOL, aguardar o agente conectar, abrir site, fazer login quando necessario e tocar a radio.
 - "Desligar computador" deve ser executado pelo agente local online. Um computador offline nao consegue receber comando de desligamento.
 - O comando de stop deve atuar no navegador/perfil controlado pelo Radio BOT, nao em todos os programas do sistema operacional.
-- A Oliveira FM sera tratada inicialmente como perfil de link direto, sem credenciais.
+- A Palmeirinha FM sera tratada como perfil principal de link direto, sem credenciais.
+- A Oliveira FM pode ser cadastrada como link direto para o site publico, mas exige acionar `Play` manualmente.
 
 ## Modelo funcional esperado
 
@@ -97,19 +98,20 @@ Fluxo:
 3. Agente pausa elementos `audio`/`video`, tenta clicar no botao de pause/stop do player ativo e opcionalmente fecha a pagina controlada.
 4. Estado do computador e historico sao atualizados.
 
-### Oliveira FM
+### Radios principais
 
 Fluxo:
 
-1. Perfil `Oliveira FM` aponta para `https://www.oliveirafm.com.br/`.
+1. Perfil `Palmeirinha FM` aponta para `https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA`.
 2. Operador seleciona esse perfil e um computador.
-3. Ao clicar em abrir/tocar, agente abre o site e executa `play_radio`.
+3. Ao clicar em abrir/tocar, agente abre o link direto e executa `play_radio` quando a rotina pedir tocar.
 4. Automacao tenta:
    - Liberar prompt de autoplay, se o navegador exigir clique.
    - Encontrar player no documento principal ou em iframes.
    - Clicar em botao com texto/atributos de play.
    - Como fallback, executar `play()` em elementos `audio`/`video`.
 5. Resultado deve informar se audio/video ficou em reproducao ou qual seletor falhou.
+6. Perfil `Oliveira FM` aponta para `https://www.oliveirafm.com.br/` quando cadastrado manualmente e deve receber clique em `Play`, pois nao inicia apenas ao entrar.
 
 ## Alteracoes em `packages/shared`
 
@@ -300,15 +302,16 @@ Adicionar uma secao/modal `Agendamentos`:
 - Acao `Executar agora` para teste manual.
 - Mostrar ultima execucao e proxima execucao.
 
-### Oliveira FM
+### Radios
 
 Adicionar caminho facil no cadastro de radio:
 
-- Botao ou preset `Oliveira FM`.
+- Botao ou preset `Palmeirinha FM`.
 - Preencher:
-  - Nome: `Oliveira FM`
-  - URL: `https://www.oliveirafm.com.br/`
+  - Nome: `Palmeirinha FM`
+  - URL: `https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA`
   - Tipo: `Link direto`
+- Manter preset `Oliveira FM manual` para o site `https://www.oliveirafm.com.br/`.
 - Permitir vincular o perfil a qualquer computador.
 
 ## Configuracao e seed
@@ -318,9 +321,9 @@ Atualizar `.env.example`, `README.md` e docs relevantes:
 ```json
 SITE_PROFILES_JSON=[
   {
-    "id": "oliveira-fm",
-    "name": "Oliveira FM",
-    "siteUrl": "https://www.oliveirafm.com.br/",
+    "id": "palmeirinha-fm",
+    "name": "Palmeirinha FM",
+    "siteUrl": "https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA",
     "username": "",
     "password": ""
   }
@@ -363,13 +366,13 @@ Durante a implementacao, validar os seletores reais com Playwright porque o site
 - Testar `shutdown` com mock de `execFile`.
 - Testar que comandos desconhecidos continuam falhando.
 
-### Teste manual Oliveira FM
+### Teste manual radios
 
 1. Rodar API, web e agent local.
-2. Cadastrar perfil Oliveira FM com URL `https://www.oliveirafm.com.br/`.
+2. Conferir que o seed trouxe Palmeirinha FM com URL `https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA`.
 3. Vincular ao computador local.
 4. Clicar em abrir.
-5. Clicar em play.
+5. Se cadastrar Oliveira FM com URL `https://www.oliveirafm.com.br/`, clicar em `Play` depois de abrir.
 6. Capturar screenshot.
 7. Clicar em stop e confirmar que a reproducao parou.
 8. Criar agendamento `Executar agora` para validar a rotina completa.
@@ -383,7 +386,7 @@ Durante a implementacao, validar os seletores reais com Playwright porque o site
 5. [x] Criar modelo, endpoints e persistencia de agendamentos.
 6. [x] Implementar scheduler da API.
 7. [x] Implementar rotina `power_on_start` com espera do agente e sequencia de comandos.
-8. [x] Adicionar preset/documentacao da Oliveira FM.
+8. [x] Adicionar preset/documentacao da radio principal.
 9. [x] Validar manualmente o player real da Oliveira FM e ajustar `ACTION_MAP_JSON` ou seletores internos.
 10. [ ] Rodar typecheck e testes manuais de ponta a ponta.
 
@@ -397,10 +400,10 @@ Durante a implementacao, validar os seletores reais com Playwright porque o site
 
 ## Criterios de aceite
 
-- Operador consegue cadastrar um horario para ligar um computador e iniciar a Oliveira FM automaticamente.
+- Operador consegue cadastrar um horario para ligar um computador e iniciar a Palmeirinha FM automaticamente.
 - Operador consegue cadastrar um horario para desligar um computador online.
 - Painel mostra agendamentos, proxima execucao e historico das execucoes.
 - Botao `Stop` para a reproducao no navegador controlado pelo agente.
-- Perfil Oliveira FM fica disponivel como link direto e o comando `Play` aciona o player.
+- Perfil Palmeirinha FM fica disponivel como link direto; Oliveira FM fica como opcao manual quando cadastrada.
 - Falhas de WOL, agente offline, player nao encontrado e desligamento negado aparecem claramente no historico.
 - `npm run typecheck` passa.

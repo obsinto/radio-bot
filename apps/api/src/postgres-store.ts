@@ -374,6 +374,47 @@ export class PostgresStore {
     return toSafeProfile(profile);
   }
 
+  async updateProfile(
+    profileId: string,
+    update: Partial<Pick<SiteProfile, "name" | "siteUrl" | "username" | "password">>
+  ): Promise<SafeSiteProfile | null> {
+    const current = await this.getProfile(profileId);
+    if (!current) {
+      return null;
+    }
+
+    const next: SiteProfile = {
+      ...current,
+      name: update.name?.trim() ?? current.name,
+      siteUrl: update.siteUrl?.trim() ?? current.siteUrl,
+      username: update.username?.trim() ?? current.username,
+      password: update.password ?? current.password
+    };
+
+    const result = await this.pool.query<ProfileRow>(
+      `
+        UPDATE site_profiles
+        SET
+          name = $2,
+          site_url = $3,
+          username_cipher = $4,
+          password_cipher = $5,
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [
+        profileId,
+        next.name,
+        next.siteUrl,
+        encryptSecret(next.username, this.config.encryptionKey),
+        encryptSecret(next.password, this.config.encryptionKey)
+      ]
+    );
+
+    return result.rows[0] ? toSafeProfile(this.profileFromRow(result.rows[0], false)) : null;
+  }
+
   async createDevice(input: {
     id?: string;
     name: string;
@@ -431,6 +472,32 @@ export class PostgresStore {
     };
   }
 
+  async updateDevice(
+    deviceId: string,
+    update: Partial<Pick<Device, "name" | "location">>
+  ): Promise<SafeDevice | null> {
+    const current = await this.getDevice(deviceId);
+    if (!current) {
+      return null;
+    }
+
+    await this.pool.query(
+      `
+        UPDATE devices
+        SET name = $2, location = $3, updated_at = NOW()
+        WHERE id = $1
+      `,
+      [
+        deviceId,
+        update.name?.trim() ?? current.name,
+        update.location?.trim() ?? current.location
+      ]
+    );
+
+    const device = await this.getDevice(deviceId);
+    return device ? toSafeDevice(device) : null;
+  }
+
   async createWolGateway(input: {
     id?: string;
     name: string;
@@ -461,6 +528,32 @@ export class PostgresStore {
       ...toSafeWolGateway(gateway),
       token
     };
+  }
+
+  async updateWolGateway(
+    gatewayId: string,
+    update: Partial<Pick<WolGateway, "name" | "location">>
+  ): Promise<SafeWolGateway | null> {
+    const current = await this.getWolGateway(gatewayId);
+    if (!current) {
+      return null;
+    }
+
+    const result = await this.pool.query<WolGatewayRow>(
+      `
+        UPDATE wol_gateways
+        SET name = $2, location = $3, updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [
+        gatewayId,
+        update.name?.trim() ?? current.name,
+        update.location?.trim() ?? current.location
+      ]
+    );
+
+    return result.rows[0] ? toSafeWolGateway(this.wolGatewayFromRow(result.rows[0])) : null;
   }
 
   async getProfile(profileId: string): Promise<SiteProfile | null> {

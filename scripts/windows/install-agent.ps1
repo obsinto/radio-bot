@@ -16,6 +16,9 @@ param(
   [ValidateSet("true", "false")]
   [string]$Headless = "false",
 
+  [ValidateSet("true", "false")]
+  [string]$ShutdownDryRun = "false",
+
   [string]$ActionMapJson = "{}",
 
   [string]$TaskName = "RadioBOTAgent",
@@ -36,6 +39,36 @@ function Assert-CommandExists {
 
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
     throw "Comando '$Name' nao encontrado. Instale Node.js LTS antes de continuar."
+  }
+}
+
+function Resolve-NativeCommand {
+  param(
+    [string[]]$Names,
+    [string]$InstallHint
+  )
+
+  foreach ($Name in $Names) {
+    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($command) {
+      return $command.Source
+    }
+  }
+
+  throw $InstallHint
+}
+
+function Invoke-NativeCommand {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments,
+    [string]$Step
+  )
+
+  Write-Host "[$Step] $FilePath $($Arguments -join ' ')"
+  & $FilePath @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Step falhou. Codigo: $LASTEXITCODE"
   }
 }
 
@@ -80,9 +113,20 @@ function Copy-Project {
 }
 
 Assert-Windows
-Assert-CommandExists "node"
-Assert-CommandExists "npm"
-Assert-CommandExists "npx"
+Assert-CommandExists "robocopy"
+
+$Node = Resolve-NativeCommand `
+  -Names @("node.exe", "node") `
+  -InstallHint "Node.js nao encontrado. Instale Node.js LTS antes de continuar."
+$Npm = Resolve-NativeCommand `
+  -Names @("npm.cmd", "npm") `
+  -InstallHint "npm nao encontrado. Instale Node.js LTS antes de continuar."
+$Npx = Resolve-NativeCommand `
+  -Names @("npx.cmd", "npx") `
+  -InstallHint "npx nao encontrado. Instale Node.js LTS antes de continuar."
+
+Invoke-NativeCommand -FilePath $Node -Arguments @("--version") -Step "Validando Node.js"
+Invoke-NativeCommand -FilePath $Npm -Arguments @("--version") -Step "Validando npm"
 
 $SourceRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -104,16 +148,17 @@ DEVICE_ID=$DeviceId
 DEVICE_TOKEN=$DeviceToken
 BROWSER_PROFILE_PATH=$BrowserProfilePath
 HEADLESS=$Headless
+SHUTDOWN_DRY_RUN=$ShutdownDryRun
 ACTION_MAP_JSON=$ActionMapJson
 "@ | Set-Content -Path $EnvFile -Encoding utf8
 
 Set-Location $InstallDir
 
 if (-not $SkipDependencyInstall) {
-  npm install
-  npx playwright install chromium
-  npm run build -w "@radio-bot/shared"
-  npm run build -w "@radio-bot/agent"
+  Invoke-NativeCommand -FilePath $Npm -Arguments @("install") -Step "Instalando dependencias"
+  Invoke-NativeCommand -FilePath $Npx -Arguments @("playwright", "install", "chromium") -Step "Instalando Chromium Playwright"
+  Invoke-NativeCommand -FilePath $Npm -Arguments @("run", "build", "-w", "@radio-bot/shared") -Step "Compilando pacote compartilhado"
+  Invoke-NativeCommand -FilePath $Npm -Arguments @("run", "build", "-w", "@radio-bot/agent") -Step "Compilando agente"
 }
 
 $RunScript = Join-Path $InstallDir "scripts\windows\run-agent.ps1"

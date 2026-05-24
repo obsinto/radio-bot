@@ -424,7 +424,11 @@ export class BrowserController {
     }
 
     try {
-      return new URL(currentUrl).origin !== new URL(targetUrl).origin;
+      const current = new URL(currentUrl);
+      const target = new URL(targetUrl);
+      current.hash = "";
+      target.hash = "";
+      return current.toString() !== target.toString();
     } catch {
       return true;
     }
@@ -614,7 +618,7 @@ export class BrowserController {
 
   private async login(profile: SiteProfile): Promise<void> {
     const page = await this.ensurePage(profile);
-    if (!page.url() || page.url() === "about:blank") {
+    if (this.shouldOpenProfileUrl(page.url(), profile.siteUrl)) {
       await this.openSite(profile);
     }
 

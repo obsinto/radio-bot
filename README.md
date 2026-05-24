@@ -69,7 +69,7 @@ As credenciais dos perfis de radio sao salvas criptografadas com `ENCRYPTION_KEY
 `SITE_PROFILES_JSON` recebe uma lista de perfis. Cada perfil representa uma radio ou conta do site:
 
 ```json
-[{"id":"oliveira-fm","name":"Oliveira FM","siteUrl":"https://www.oliveirafm.com.br/","username":"","password":""}]
+[{"id":"palmeirinha-fm","name":"Palmeirinha FM","siteUrl":"https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA","username":"","password":""}]
 ```
 
 Com PostgreSQL ativo, essa lista funciona como seed inicial. Novas radios cadastradas pelo painel ficam salvas no banco.
@@ -79,8 +79,10 @@ Com PostgreSQL ativo, essa lista funciona como seed inicial. Novas radios cadast
 Cada computador local precisa de um `DEVICE_ID` e `DEVICE_TOKEN` proprios. O painel tambem consegue gerar novos tokens ao cadastrar um computador:
 
 ```json
-[{"id":"studio-01","name":"Studio 01","location":"Local principal","token":"change-studio-01-token","profileIds":["oliveira-fm"],"wolGatewayId":"esp-studio-01"}]
+[{"id":"studio-01","name":"Studio 01","location":"Local principal","token":"change-studio-01-token","profileIds":["palmeirinha-fm","oliveira-fm"],"wolGatewayId":"esp-studio-01"}]
 ```
+
+`profileIds` pode ter mais de uma radio para o mesmo computador. O painel usa essa lista para limitar quais radios aparecem nos comandos e agendamentos daquele computador.
 
 No computador local, configure:
 
@@ -151,6 +153,8 @@ O painel possui a secao "Agendamentos" para criar rotinas de ligar e tocar ou de
 
 - `Ligar e tocar`: envia Wake-on-LAN quando necessario, aguarda o agente ficar online, abre a radio e executa `play_radio`.
 - `Desligar`: envia `shutdown` para um computador online.
+
+Cada rotina de `Ligar e tocar` escolhe explicitamente um computador e uma radio. Assim, o mesmo computador pode ligar as 10:00 na Palmeirinha FM e as 17:30 em outra radio cadastrada.
 
 O horario usa timezone configuravel por agendamento; o padrao recomendado para operacao local e `America/Sao_Paulo`.
 

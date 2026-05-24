@@ -30,6 +30,17 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return data.data as T;
 }
 
+function requireGatewayToken(gateway: SafeWolGateway & { token?: string }): SafeWolGateway & { token: string } {
+  if (!gateway.token) {
+    throw {
+      ok: false,
+      code: "MISSING_WOL_GATEWAY_TOKEN",
+      message: "A API nao retornou o token do ESP32. Recrie o gateway usando o backend real."
+    } satisfies ApiError;
+  }
+  return gateway as SafeWolGateway & { token: string };
+}
+
 export async function login(email: string, password: string): Promise<LoginResult> {
   const response = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
@@ -104,6 +115,27 @@ export async function createProfile(input: {
   return parseResponse<SafeSiteProfile>(response);
 }
 
+export async function updateProfile(input: {
+  token: string;
+  profileId: string;
+  name: string;
+  siteUrl: string;
+}): Promise<SafeSiteProfile> {
+  const response = await fetch(`${API_URL}/api/profiles/${input.profileId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      name: input.name,
+      siteUrl: input.siteUrl
+    })
+  });
+
+  return parseResponse<SafeSiteProfile>(response);
+}
+
 export async function createDevice(input: {
   token: string;
   name: string;
@@ -124,6 +156,27 @@ export async function createDevice(input: {
   });
 
   return parseResponse<SafeDevice & { token: string }>(response);
+}
+
+export async function updateDevice(input: {
+  token: string;
+  deviceId: string;
+  name: string;
+  location: string;
+}): Promise<SafeDevice> {
+  const response = await fetch(`${API_URL}/api/devices/${input.deviceId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      name: input.name,
+      location: input.location
+    })
+  });
+
+  return parseResponse<SafeDevice>(response);
 }
 
 export async function updateDeviceProfiles(input: {
@@ -201,7 +254,28 @@ export async function createWolGateway(input: {
     })
   });
 
-  return parseResponse<SafeWolGateway & { token: string }>(response);
+  return requireGatewayToken(await parseResponse<SafeWolGateway & { token?: string }>(response));
+}
+
+export async function updateWolGateway(input: {
+  token: string;
+  gatewayId: string;
+  name: string;
+  location: string;
+}): Promise<SafeWolGateway> {
+  const response = await fetch(`${API_URL}/api/wol-gateways/${input.gatewayId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      name: input.name,
+      location: input.location
+    })
+  });
+
+  return parseResponse<SafeWolGateway>(response);
 }
 
 export async function createSchedule(input: {
