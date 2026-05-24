@@ -99,16 +99,16 @@ export function loadConfig(): AppConfig {
   ];
 
   return {
-    port: Number(process.env.PORT ?? 3000),
-    host: process.env.HOST ?? "0.0.0.0",
-    appUrl: process.env.APP_URL ?? "http://localhost:5173",
-    jwtSecret: process.env.JWT_SECRET ?? "dev-only-change-this-secret",
-    adminEmail: process.env.ADMIN_EMAIL ?? "admin@radio.local",
-    adminPassword: process.env.ADMIN_PASSWORD ?? "change-me",
-    databaseUrl: process.env.DATABASE_URL ?? null,
+    port: Number(process.env.PORT || 3000),
+    host: process.env.HOST || "0.0.0.0",
+    appUrl: process.env.APP_URL || "http://localhost:5173",
+    jwtSecret: process.env.JWT_SECRET || "dev-only-change-this-secret",
+    adminEmail: process.env.ADMIN_EMAIL || "admin@radio.local",
+    adminPassword: process.env.ADMIN_PASSWORD || "change-me",
+    databaseUrl: process.env.DATABASE_URL || null,
     encryptionKey:
-      process.env.ENCRYPTION_KEY ??
-      process.env.JWT_SECRET ??
+      process.env.ENCRYPTION_KEY ||
+      process.env.JWT_SECRET ||
       "dev-only-change-this-encryption-key",
     profiles,
     devices,
