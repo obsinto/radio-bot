@@ -1,6 +1,8 @@
 # Instalacao do Agente no Linux (systemd user service)
 
-Este guia instala o agente Radio BOT como um servico **do usuario** no systemd, com `linger` habilitado pra subir automaticamente no boot (mesmo sem login grafico). Modo headless (sem janela visivel).
+Este guia instala o agente Radio BOT como um servico **do usuario** no systemd. Por padrao, o Chromium fica visivel na sessao grafica do operador (`HEADLESS=false`).
+
+Modo visivel exige login grafico ativo. Sem sessao grafica, use headless ou o navegador nao conseguira abrir janela.
 
 ## Pre-requisitos
 
@@ -31,8 +33,8 @@ O instalador vai perguntar, interativamente:
 - URL WebSocket da API, por exemplo `wss://api.seu-dominio.com/agent`.
 - `DEVICE_ID` do computador cadastrado no painel.
 - `DEVICE_TOKEN` do computador. O token nao aparece na tela.
-- Modo headless.
-- Se desligamento deve ser simulado com `SHUTDOWN_DRY_RUN`.
+- Se o navegador deve rodar invisivel/headless. Default: `nao`.
+- Se desligamento deve ser simulado com `SHUTDOWN_DRY_RUN`. Default: `nao`.
 
 Importante: use a URL da **API**, nao a URL do painel web. Se o painel for `https://radio.agilytech.com` e a API for `https://radio-api.agilytech.com`, o agente deve usar `wss://radio-api.agilytech.com/agent`.
 
@@ -41,7 +43,7 @@ O script faz:
 1. `npm install` na raiz do repo.
 2. Build de `@radio-bot/shared` + `@radio-bot/agent`.
 3. `npx playwright install chromium` (~250MB no primeiro deploy).
-4. Valida a conexao WebSocket com a API antes de registrar o servico.
+4. Tenta validar a conexao WebSocket com a API antes de registrar o servico.
 5. Escreve `apps/agent/.env` com as credenciais (chmod 600).
 6. Cria `~/.config/systemd/user/radio-bot-agent.service` apontando pra esta pasta.
 7. `sudo loginctl enable-linger $USER` (pede senha) — faz o servico subir no boot mesmo sem login.
@@ -65,12 +67,14 @@ No painel da VPS, o computador deve aparecer **online**.
 
 | Flag | Default | O que faz |
 | --- | --- | --- |
-| `--repo-dir PATH` | pasta atual | Raiz do repo Radio BOT |
+| `--repo-dir PATH` | raiz detectada pelo script | Raiz do repo Radio BOT |
 | `--service-name NAME` | `radio-bot-agent` | Nome do servico systemd |
 | `--no-linger` | linger ON | Pula `loginctl enable-linger` |
 | `--skip-build` | build ON | Reaproveita build existente |
 
 `SERVER_URL`, `DEVICE_ID`, `DEVICE_TOKEN`, `HEADLESS` e `SHUTDOWN_DRY_RUN` sao perguntados no prompt. O instalador recusa `--server-url`, `--device-id`, `--device-token` e `--headless` para evitar credenciais/configuracao do agente no historico do shell.
+
+As credenciais podem ser coladas como valor puro ou no formato exibido pelo painel, por exemplo `DEVICE_ID=studio-01` e `DEVICE_TOKEN=...`.
 
 ## Atualizar para uma versao nova
 
@@ -139,9 +143,14 @@ rm -rf ~/Repositories/Radio-BOT/apps/agent/.cache
 # rm -rf ~/Repositories/Radio-BOT
 ```
 
-## Trocar de modo headless para visivel
+## Trocar o modo do navegador
 
-Edita `apps/agent/.env` e troca `HEADLESS=true` por `HEADLESS=false`. Depois:
+Edita `apps/agent/.env` e ajusta `HEADLESS`.
+
+- `HEADLESS=false`: navegador visivel.
+- `HEADLESS=true`: navegador sem janela.
+
+Depois:
 
 ```bash
 systemctl --user restart radio-bot-agent

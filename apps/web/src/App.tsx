@@ -128,6 +128,14 @@ function storedToken(): string | null {
   return window.localStorage.getItem("radio-bot-token");
 }
 
+function displayErrorMessage(error: unknown, fallback: string): string {
+  const message = (error as ApiError | Error | undefined)?.message;
+  if (message === "Failed to fetch") {
+    return "Nao foi possivel conectar a API. Confira se o backend esta rodando e se VITE_API_URL aponta para a porta correta.";
+  }
+  return message ?? fallback;
+}
+
 export function App() {
   const [token, setToken] = useState<string | null>(() => storedToken());
   const [email, setEmail] = useState("admin@radio.local");
@@ -151,9 +159,17 @@ export function App() {
     () => dashboard?.devices.find((device) => device.id === selectedDeviceId) ?? null,
     [dashboard, selectedDeviceId]
   );
+  const allowedProfiles = useMemo(() => {
+    if (!dashboard || !selectedDevice) {
+      return [];
+    }
+
+    const allowedIds = new Set(selectedDevice.profileIds);
+    return dashboard.profiles.filter((profile) => allowedIds.has(profile.id));
+  }, [dashboard, selectedDevice]);
   const selectedProfile = useMemo(
-    () => dashboard?.profiles.find((profile) => profile.id === selectedProfileId) ?? null,
-    [dashboard, selectedProfileId]
+    () => allowedProfiles.find((profile) => profile.id === selectedProfileId) ?? null,
+    [allowedProfiles, selectedProfileId]
   );
 
   useEffect(() => {
@@ -169,8 +185,11 @@ export function App() {
           return;
         }
         setDashboard(state);
-        setSelectedDeviceId((current) => current ?? state.devices[0]?.id ?? null);
-        setSelectedProfileId((current) => current ?? state.profiles[0]?.id ?? null);
+        setSelectedDeviceId((current) =>
+          current && state.devices.some((device) => device.id === current)
+            ? current
+            : state.devices[0]?.id ?? null
+        );
         const promptCommand = state.commands.find((command) => {
           const sitePrompt = command.output?.sitePrompt as SitePrompt | undefined;
           return (
@@ -193,7 +212,7 @@ export function App() {
           window.localStorage.removeItem("radio-bot-token");
           setToken(null);
         } else {
-          setMessage(apiError.message ?? "Falha ao atualizar estado.");
+          setMessage(displayErrorMessage(error, "Falha ao atualizar estado."));
         }
       }
     };
@@ -206,6 +225,29 @@ export function App() {
     };
   }, [token, dismissedPromptIds]);
 
+  useEffect(() => {
+    if (!dashboard) {
+      return;
+    }
+
+    if (!selectedDevice) {
+      setSelectedProfileId(null);
+      return;
+    }
+
+    const activeProfileId = selectedDevice.currentProfileId;
+    const fallbackProfileId =
+      activeProfileId && allowedProfiles.some((profile) => profile.id === activeProfileId)
+        ? activeProfileId
+        : allowedProfiles[0]?.id ?? null;
+
+    setSelectedProfileId((current) =>
+      current && allowedProfiles.some((profile) => profile.id === current)
+        ? current
+        : fallbackProfileId
+    );
+  }, [allowedProfiles, dashboard, selectedDevice]);
+
   async function submitLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage(null);
@@ -214,8 +256,19 @@ export function App() {
       window.localStorage.setItem("radio-bot-token", session.token);
       setToken(session.token);
     } catch (error) {
-      setMessage((error as ApiError).message ?? "Nao foi possivel entrar.");
+      setMessage(displayErrorMessage(error, "Nao foi possivel entrar."));
     }
+  }
+
+  function openSettings() {
+    if (!dashboard) {
+      setMessage(
+        "Configuracoes indisponiveis ate o estado inicial carregar. Confira a conexao com a API.",
+        "error"
+      );
+      return;
+    }
+    setSettingsOpen(true);
   }
 
   async function runCommand(
@@ -223,7 +276,7 @@ export function App() {
     confirmations = 0,
     payload?: Record<string, unknown>
   ) {
-    if (!token || !selectedDeviceId || !selectedProfileId) {
+    if (!token || !selectedDeviceId || !selectedProfile) {
       return;
     }
 
@@ -233,7 +286,7 @@ export function App() {
       await sendCommand({
         token,
         deviceId: selectedDeviceId,
-        profileId: selectedProfileId,
+        profileId: selectedProfile.id,
         action,
         payload,
         confirmations
@@ -255,7 +308,7 @@ export function App() {
           step: 1
         });
       } else {
-        setMessage(apiError.message ?? "Comando nao executado.");
+        setMessage(displayErrorMessage(error, "Comando nao executado."));
       }
     } finally {
       setBusyAction(null);
@@ -282,7 +335,7 @@ export function App() {
       setPendingSitePrompt(null);
       setDashboard(await getState(token));
     } catch (error) {
-      setMessage((error as ApiError).message ?? "Nao foi possivel continuar no site.");
+      setMessage(displayErrorMessage(error, "Nao foi possivel continuar no site."));
     } finally {
       setBusyAction(null);
     }
@@ -345,7 +398,7 @@ export function App() {
           <button
             className="icon-button"
             type="button"
-            onClick={() => setSettingsOpen(true)}
+            onClick={openSettings}
             title="Configuracoes"
           >
             <Settings aria-hidden="true" />
@@ -358,20 +411,11 @@ export function App() {
 
       <section className="workspace">
         <aside className="rail">
-          <SectionTitle icon={Radio} label="Radios" />
-          <div className="stack">
-            {dashboard?.profiles.map((profile) => (
-              <ProfileButton
-                key={profile.id}
-                profile={profile}
-                active={profile.id === selectedProfileId}
-                onClick={() => setSelectedProfileId(profile.id)}
-              />
-            ))}
-          </div>
-
           <SectionTitle icon={Monitor} label="Computadores" />
           <div className="stack">
+            {dashboard?.devices.length === 0 ? (
+              <p className="empty-state">Nenhum computador cadastrado.</p>
+            ) : null}
             {dashboard?.devices.map((device) => (
               <DeviceButton
                 key={device.id}
@@ -382,7 +426,7 @@ export function App() {
             ))}
           </div>
 
-          <button className="admin-launch" type="button" onClick={() => setSettingsOpen(true)}>
+          <button className="admin-launch" type="button" onClick={openSettings}>
             <Settings aria-hidden="true" />
             Configuracoes
           </button>
@@ -396,6 +440,14 @@ export function App() {
             </div>
             <StatusPill device={selectedDevice} />
           </div>
+
+          <RadioSelector
+            profiles={allowedProfiles}
+            selectedProfileId={selectedProfile?.id ?? ""}
+            disabled={!selectedDevice || allowedProfiles.length === 0}
+            onChange={setSelectedProfileId}
+            onOpenSettings={openSettings}
+          />
 
           <div className="readout-grid">
             <Readout label="Radio" value={selectedProfile?.name ?? "-"} />
@@ -412,6 +464,8 @@ export function App() {
               const requiresOnline = !button.availableOffline;
               const disabled =
                 busyAction !== null ||
+                !selectedDevice ||
+                !selectedProfile ||
                 (requiresOnline && selectedDevice?.status !== "online");
               return (
                 <button
@@ -1371,23 +1425,6 @@ function SectionTitle({ icon: Icon, label }: { icon: typeof Radio; label: string
   );
 }
 
-function ProfileButton({
-  profile,
-  active,
-  onClick
-}: {
-  profile: SafeSiteProfile;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button className={`select-row ${active ? "active" : ""}`} type="button" onClick={onClick}>
-      <span className="row-main">{profile.name}</span>
-      <span className="row-sub">{profile.usernameLabel}</span>
-    </button>
-  );
-}
-
 function DeviceButton({
   device,
   active,
@@ -1405,6 +1442,70 @@ function DeviceButton({
       </span>
       <span className="row-sub">{device.location}</span>
     </button>
+  );
+}
+
+function RadioSelector({
+  profiles,
+  selectedProfileId,
+  disabled,
+  onChange,
+  onOpenSettings
+}: {
+  profiles: SafeSiteProfile[];
+  selectedProfileId: string;
+  disabled: boolean;
+  onChange: (profileId: string) => void;
+  onOpenSettings: () => void;
+}) {
+  const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? null;
+
+  return (
+    <section className="radio-selector" aria-labelledby="radio-selector-title">
+      <div className="radio-selector-head">
+        <div>
+          <p className="eyebrow" id="radio-selector-title">
+            Radio
+          </p>
+          <strong>{selectedProfile?.name ?? "Nenhuma radio vinculada"}</strong>
+        </div>
+        <span>{profiles.length}</span>
+      </div>
+
+      {profiles.length > 0 ? (
+        <label className="radio-select-field">
+          <Radio aria-hidden="true" />
+          <select
+            value={selectedProfileId}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value)}
+          >
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <div className="radio-empty">
+          <span>Nenhuma radio vinculada a este computador.</span>
+          <button className="ghost-button compact-action" type="button" onClick={onOpenSettings}>
+            <Settings aria-hidden="true" />
+            Configuracoes
+          </button>
+        </div>
+      )}
+
+      {selectedProfile ? (
+        <div className="radio-selector-meta">
+          <span>{selectedProfile.usernameLabel}</span>
+          <a href={selectedProfile.siteUrl} target="_blank" rel="noreferrer">
+            {selectedProfile.siteUrl}
+          </a>
+        </div>
+      ) : null}
+    </section>
   );
 }
 

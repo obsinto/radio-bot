@@ -98,6 +98,42 @@ function ConvertTo-PlainText {
   }
 }
 
+function Remove-AgentEnvAssignment {
+  param(
+    [string]$Value,
+    [string]$Key
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return ""
+  }
+
+  $trimmed = $Value.Trim()
+  $pattern = "^(?:export\s+)?$([regex]::Escape($Key))\s*=\s*(.*)$"
+  if ($trimmed -match $pattern) {
+    return $Matches[1].Trim()
+  }
+
+  return $trimmed
+}
+
+function Normalize-WebSocketUrl {
+  param([string]$Value)
+
+  $url = Remove-AgentEnvAssignment -Value $Value -Key "SERVER_URL"
+  if ($url.StartsWith("https://", [StringComparison]::OrdinalIgnoreCase)) {
+    $url = "wss://$($url.Substring("https://".Length))"
+  } elseif ($url.StartsWith("http://", [StringComparison]::OrdinalIgnoreCase)) {
+    $url = "ws://$($url.Substring("http://".Length))"
+  }
+
+  if ($url -match "^(wss?://[^/?#]+)/?$") {
+    $url = "$($Matches[1])/agent"
+  }
+
+  return $url
+}
+
 function Read-RequiredSecret {
   param(
     [string]$Prompt,
@@ -116,7 +152,7 @@ function Read-RequiredSecret {
 
     $plain = ConvertTo-PlainText $secure
     if (-not [string]::IsNullOrWhiteSpace($plain)) {
-      return $plain
+      return $plain.Trim()
     }
 
     Write-Host "Valor obrigatorio." -ForegroundColor Yellow
@@ -220,6 +256,7 @@ try {
 
 url.searchParams.set("deviceId", deviceId);
 url.searchParams.set("token", token);
+url.searchParams.set("validateOnly", "1");
 
 let settled = false;
 let socket;
@@ -241,9 +278,9 @@ const finish = (code, message) => {
 
 const timer = setTimeout(() => {
   finish(3, "Falha WebSocket: timeout aguardando confirmacao da API.");
-}, 8000);
+}, 20000);
 
-socket = new WebSocket(url, { handshakeTimeout: 8000 });
+socket = new WebSocket(url, { handshakeTimeout: 20000 });
 
 socket.on("message", (raw) => {
   try {
@@ -257,6 +294,7 @@ socket.on("message", (raw) => {
 
 socket.on("unexpected-response", (_request, response) => {
   const contentType = String(response.headers["content-type"] ?? "");
+  let exitCode = 4;
   let message = `Falha WebSocket: servidor respondeu HTTP ${response.statusCode}`;
   if (contentType) {
     message += ` (${contentType})`;
@@ -269,9 +307,10 @@ socket.on("unexpected-response", (_request, response) => {
     message += "\nA rota /agent nao foi encontrada. Confira o dominio da API e o proxy.";
   } else if (response.statusCode === 502 || response.statusCode === 503 || response.statusCode === 504) {
     message += "\nA API ou o proxy reverso nao esta aceitando a conexao agora.";
+    exitCode = 8;
   }
 
-  finish(4, message);
+  finish(exitCode, message);
 });
 
 socket.on("close", (code, reasonBuffer) => {
@@ -296,8 +335,12 @@ socket.on("error", (error) => {
     $env:RADIO_BOT_TEST_DEVICE_ID = $DeviceId
     $env:RADIO_BOT_TEST_DEVICE_TOKEN = $DeviceToken
     & $Node "--input-type=module" "-e" $script
-    if ($LASTEXITCODE -ne 0) {
-      throw "Validacao WebSocket falhou. Ajuste a URL/API/credenciais e rode o instalador novamente."
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+      if ($exitCode -in @(2, 4, 5)) {
+        throw "Validacao WebSocket falhou. Ajuste a URL/API/credenciais e rode o instalador novamente."
+      }
+      Write-Host "[aviso] Nao foi possivel confirmar o WebSocket agora. O instalador vai continuar; confira os logs do agente depois." -ForegroundColor Yellow
     }
   } finally {
     Remove-Item Env:RADIO_BOT_TEST_SERVER_URL -ErrorAction SilentlyContinue
@@ -389,9 +432,9 @@ Write-Host "[config] Use a URL da API, nao a URL do painel."
 Write-Host "[config] Exemplo: wss://api.seu-dominio.com/agent"
 Write-Host ""
 
-$ServerUrl = Read-RequiredText -Prompt "URL WebSocket da API" -Default $ExistingEnv["SERVER_URL"]
-$DeviceId = Read-RequiredText -Prompt "Device ID do computador" -Default $ExistingEnv["DEVICE_ID"]
-$DeviceToken = Read-RequiredSecret -Prompt "Device token" -CurrentValue $ExistingEnv["DEVICE_TOKEN"]
+$ServerUrl = Normalize-WebSocketUrl -Value (Read-RequiredText -Prompt "URL WebSocket da API" -Default $ExistingEnv["SERVER_URL"])
+$DeviceId = Remove-AgentEnvAssignment -Value (Read-RequiredText -Prompt "Device ID do computador" -Default $ExistingEnv["DEVICE_ID"]) -Key "DEVICE_ID"
+$DeviceToken = Remove-AgentEnvAssignment -Value (Read-RequiredSecret -Prompt "Device token" -CurrentValue $ExistingEnv["DEVICE_TOKEN"]) -Key "DEVICE_TOKEN"
 $TaskName = Read-RequiredText -Prompt "Nome da tarefa agendada" -Default $TaskName
 
 Copy-Project -SourceRoot $SourceRoot -DestinationRoot $InstallDir
@@ -405,8 +448,8 @@ if ([string]::IsNullOrWhiteSpace($BrowserProfilePath)) {
 }
 
 $BrowserProfilePath = Read-RequiredText -Prompt "Perfil persistente do Chromium" -Default $BrowserProfilePath
-$Headless = Read-BooleanString -Prompt "Rodar navegador em modo invisivel/headless?" -Default $(if ($ExistingEnv.ContainsKey("HEADLESS")) { $ExistingEnv["HEADLESS"] } else { "false" })
-$ShutdownDryRun = Read-BooleanString -Prompt "Simular desligamento do computador (SHUTDOWN_DRY_RUN)?" -Default $(if ($ExistingEnv.ContainsKey("SHUTDOWN_DRY_RUN")) { $ExistingEnv["SHUTDOWN_DRY_RUN"] } else { "false" })
+$Headless = Read-BooleanString -Prompt "Rodar navegador em modo invisivel/headless?" -Default "false"
+$ShutdownDryRun = Read-BooleanString -Prompt "Simular desligamento do computador (SHUTDOWN_DRY_RUN)?" -Default "false"
 
 Assert-WebSocketUrlFormat -Value $ServerUrl
 

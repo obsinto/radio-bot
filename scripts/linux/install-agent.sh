@@ -10,7 +10,7 @@ Este instalador e interativo. Ele pergunta a URL WebSocket da API,
 DEVICE_ID e DEVICE_TOKEN no terminal. Nao passe credenciais por argumentos.
 
 Opcionais:
-  --repo-dir PATH         Pasta do repositorio (default: pasta atual)
+  --repo-dir PATH         Pasta do repositorio (default: raiz detectada pelo script)
   --service-name NAME     Nome do servico systemd (default: radio-bot-agent)
   --no-linger             Nao habilita linger (servico so sobe se houver login)
   --skip-build            Pula instalacao de deps e build
@@ -35,6 +35,41 @@ reject_inline_config() {
   exit 1
 }
 
+trim_value() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+strip_env_assignment() {
+  local expected_key="$1"
+  local value
+  value="$(trim_value "$2")"
+
+  if [[ "$value" =~ ^(export[[:space:]]+)?${expected_key}[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+    value="${BASH_REMATCH[2]}"
+  fi
+
+  trim_value "$value"
+}
+
+normalize_ws_url() {
+  local url
+  url="$(strip_env_assignment SERVER_URL "$1")"
+
+  case "$url" in
+    https://*) url="wss://${url#https://}" ;;
+    http://*) url="ws://${url#http://}" ;;
+  esac
+
+  if [[ "$url" =~ ^(wss?://[^/?#]+)/?$ ]]; then
+    url="${BASH_REMATCH[1]}/agent"
+  fi
+
+  printf '%s' "$url"
+}
+
 prompt_required() {
   local label="$1"
   local default_value="${2:-}"
@@ -48,7 +83,8 @@ prompt_required() {
       read -r -p "$label: " value
     fi
 
-    if [[ -n "${value//[[:space:]]/}" ]]; then
+    value="$(trim_value "$value")"
+    if [[ -n "${value}" ]]; then
       printf '%s' "$value"
       return
     fi
@@ -75,7 +111,8 @@ prompt_secret() {
       echo
     fi
 
-    if [[ -n "${value//[[:space:]]/}" ]]; then
+    value="$(trim_value "$value")"
+    if [[ -n "${value}" ]]; then
       printf '%s' "$value"
       return
     fi
@@ -89,6 +126,10 @@ prompt_bool() {
   local default_value="$2"
   local answer=""
   local suffix="s/N"
+
+  if [[ "$default_value" != "true" && "$default_value" != "false" ]]; then
+    default_value="false"
+  fi
 
   if [[ "$default_value" == "true" ]]; then
     suffix="S/n"
@@ -165,7 +206,8 @@ validate_agent_connection() {
 
   set +e
   output="$(
-    cd "$REPO_DIR" && SERVER_URL="$SERVER_URL" DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" node --input-type=module -e '
+    {
+      cd "$REPO_DIR" && SERVER_URL="$SERVER_URL" DEVICE_ID="$DEVICE_ID" DEVICE_TOKEN="$DEVICE_TOKEN" node --input-type=module -e '
 import WebSocket from "ws";
 
 const serverUrl = process.env.SERVER_URL ?? "";
@@ -182,6 +224,7 @@ try {
 
 url.searchParams.set("deviceId", deviceId);
 url.searchParams.set("token", token);
+url.searchParams.set("validateOnly", "1");
 
 let settled = false;
 let socket;
@@ -203,9 +246,9 @@ const finish = (code, message) => {
 
 const timer = setTimeout(() => {
   finish(3, "Falha WebSocket: timeout aguardando confirmacao da API.");
-}, 8000);
+}, 20000);
 
-socket = new WebSocket(url, { handshakeTimeout: 8000 });
+socket = new WebSocket(url, { handshakeTimeout: 20000 });
 
 socket.on("message", (raw) => {
   try {
@@ -219,6 +262,7 @@ socket.on("message", (raw) => {
 
 socket.on("unexpected-response", (_request, response) => {
   const contentType = String(response.headers["content-type"] ?? "");
+  let exitCode = 4;
   let message = `Falha WebSocket: servidor respondeu HTTP ${response.statusCode}`;
   if (contentType) {
     message += ` (${contentType})`;
@@ -231,9 +275,10 @@ socket.on("unexpected-response", (_request, response) => {
     message += "\nA rota /agent nao foi encontrada. Confira o dominio da API e o proxy.";
   } else if (response.statusCode === 502 || response.statusCode === 503 || response.statusCode === 504) {
     message += "\nA API ou o proxy reverso nao esta aceitando a conexao agora.";
+    exitCode = 8;
   }
 
-  finish(4, message);
+  finish(exitCode, message);
 });
 
 socket.on("close", (code, reasonBuffer) => {
@@ -252,14 +297,23 @@ socket.on("error", (error) => {
   finish(7, `Falha WebSocket: ${error.message}`);
 });
 '
+    } 2>&1
   )"
   status=$?
   set -e
 
   if [[ "$status" -ne 0 ]]; then
     echo "$output" >&2
-    echo "[erro] Ajuste a URL/API/credenciais e rode o instalador novamente." >&2
-    exit 1
+    case "$status" in
+      2|4|5)
+        echo "[erro] Ajuste a URL/API/credenciais e rode o instalador novamente." >&2
+        exit 1
+        ;;
+      *)
+        echo "[aviso] Nao foi possivel confirmar o WebSocket agora. O instalador vai continuar; confira os logs do servico depois." >&2
+        return
+        ;;
+    esac
   fi
 
   echo "$output"
@@ -278,7 +332,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$REPO_DIR" ]]; then
-  REPO_DIR="$(pwd)"
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 fi
 REPO_DIR="$(cd "$REPO_DIR" && pwd)"
 
@@ -307,11 +362,11 @@ echo "[config] Use a URL da API, nao a URL do painel."
 echo "[config] Exemplo: wss://api.seu-dominio.com/agent"
 echo
 
-SERVER_URL="$(prompt_required "URL WebSocket da API" "$EXISTING_SERVER_URL")"
-DEVICE_ID="$(prompt_required "Device ID do computador" "$EXISTING_DEVICE_ID")"
-DEVICE_TOKEN="$(prompt_secret "Device token" "$EXISTING_DEVICE_TOKEN")"
-HEADLESS="$(prompt_bool "Rodar navegador em modo headless (sem janela visivel)?" "${EXISTING_HEADLESS:-true}")"
-SHUTDOWN_DRY_RUN="$(prompt_bool "Simular desligamento do computador (SHUTDOWN_DRY_RUN)?" "${EXISTING_SHUTDOWN_DRY_RUN:-false}")"
+SERVER_URL="$(normalize_ws_url "$(prompt_required "URL WebSocket da API" "$EXISTING_SERVER_URL")")"
+DEVICE_ID="$(strip_env_assignment DEVICE_ID "$(prompt_required "Device ID do computador" "$EXISTING_DEVICE_ID")")"
+DEVICE_TOKEN="$(strip_env_assignment DEVICE_TOKEN "$(prompt_secret "Device token" "$EXISTING_DEVICE_TOKEN")")"
+HEADLESS="$(prompt_bool "Rodar navegador em modo invisivel/headless?" "false")"
+SHUTDOWN_DRY_RUN="$(prompt_bool "Simular desligamento do computador (SHUTDOWN_DRY_RUN)?" "false")"
 
 validate_ws_url_format "$SERVER_URL"
 
@@ -366,6 +421,8 @@ cat > "$UNIT_FILE" <<EOF
 Description=Radio BOT Agent ($DEVICE_ID)
 After=$unit_after
 Wants=$unit_wants
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -373,9 +430,10 @@ WorkingDirectory=$REPO_DIR
 EnvironmentFile=$ENV_FILE
 Environment=PATH=$NODE_BIN_DIR:/usr/local/bin:/usr/bin:/bin
 $display_env
+ExecStartPre=/usr/bin/sleep 10
 ExecStart=$NPM_BIN run start -w @radio-bot/agent
 Restart=always
-RestartSec=5
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
 

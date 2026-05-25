@@ -161,7 +161,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\windows\install-agent.ps1
 ```
 
-Os instaladores sao interativos e validam a conexao WebSocket antes de registrar o servico/tarefa. Se a URL apontar para o painel, a validacao mostra uma mensagem explicita como "essa URL parece ser o painel web, nao a API".
+Os instaladores sao interativos e tentam validar a conexao WebSocket antes de registrar o servico/tarefa. Se a URL apontar para o painel ou a API recusar `DEVICE_ID`/`DEVICE_TOKEN`, a instalacao para com uma mensagem explicita. Erros transitorios de rede viram aviso e o agente instalado continua tentando reconectar.
 
 Documentacao completa:
 

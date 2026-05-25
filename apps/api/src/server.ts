@@ -1331,7 +1331,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
   });
 
   server.get("/agent", { websocket: true }, async (socket, request) => {
-    const query = request.query as { deviceId?: string; token?: string };
+    const query = request.query as { deviceId?: string; token?: string; validateOnly?: string };
     if (
       !query.deviceId ||
       !query.token ||
@@ -1342,6 +1342,15 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     }
 
     const deviceId = query.deviceId;
+    if (query.validateOnly === "1") {
+      sendAgentMessage(socket, {
+        type: "registered",
+        deviceId
+      });
+      setTimeout(() => socket.close(1000, "validation complete"), 1000);
+      return;
+    }
+
     agents.get(deviceId)?.socket.close(1000, "replaced by a new connection");
     agents.set(deviceId, {
       deviceId,

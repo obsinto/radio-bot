@@ -32,12 +32,14 @@ O instalador vai perguntar, interativamente:
 - `DEVICE_TOKEN` do computador. O token nao aparece na tela.
 - Nome da tarefa agendada.
 - Pasta do perfil persistente do Chromium.
-- Se o navegador roda headless.
-- Se desligamento deve ser simulado com `SHUTDOWN_DRY_RUN`.
+- Se o navegador deve rodar invisivel/headless. Default: `nao`.
+- Se desligamento deve ser simulado com `SHUTDOWN_DRY_RUN`. Default: `nao`.
 
 Importante: use a URL da **API**, nao a URL do painel web. Se o painel for `https://radio.agilytech.com` e a API for `https://radio-api.agilytech.com`, o agente deve usar `wss://radio-api.agilytech.com/agent`.
 
 O instalador recusa `-ServerUrl`, `-DeviceId`, `-DeviceToken`, `-Headless` e `-ShutdownDryRun`; esses dados sao informados apenas pelo prompt interativo.
+
+As credenciais podem ser coladas como valor puro ou no formato exibido pelo painel, por exemplo `DEVICE_ID=studio-01` e `DEVICE_TOKEN=...`.
 
 Por padrao, o instalador usa:
 
