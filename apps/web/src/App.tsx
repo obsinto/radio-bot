@@ -272,6 +272,7 @@ export function App() {
       const session = await login(email, password);
       window.localStorage.setItem("radio-bot-token", session.token);
       setToken(session.token);
+      setEmail(session.email);
     } catch (error) {
       setMessage(displayErrorMessage(error, "Nao foi possivel entrar."));
     }
@@ -556,6 +557,11 @@ export function App() {
           onClose={() => setSettingsOpen(false)}
           onNotice={setMessage}
           onRefresh={async () => setDashboard(await getState(token))}
+          onSession={(session) => {
+            window.localStorage.setItem("radio-bot-token", session.token);
+            setToken(session.token);
+            setEmail(session.email);
+          }}
         />
       ) : null}
 

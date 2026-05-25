@@ -225,6 +225,27 @@ function isScheduleUpdateBody(body: unknown): body is ScheduleUpdate {
   );
 }
 
+function isAdminCredentialsBody(body: unknown): body is {
+  email?: string;
+  currentPassword?: string;
+  newPassword?: string;
+} {
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+
+  const candidate = body as Record<string, unknown>;
+  return (
+    (candidate.email === undefined || typeof candidate.email === "string") &&
+    (candidate.currentPassword === undefined || typeof candidate.currentPassword === "string") &&
+    (candidate.newPassword === undefined || typeof candidate.newPassword === "string")
+  );
+}
+
+function isValidAdminEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 function isWolGatewayResultBody(body: unknown): body is {
   status: "succeeded" | "failed";
   output?: Record<string, unknown>;
@@ -657,7 +678,9 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
 
   server.post("/auth/login", async (request, reply) => {
     const body = request.body as { email?: string; password?: string };
-    if (body?.email !== config.adminEmail || body?.password !== config.adminPassword) {
+    const email = typeof body?.email === "string" ? body.email : "";
+    const password = typeof body?.password === "string" ? body.password : "";
+    if (!(await store.verifyAdminCredentials(email, password))) {
       return apiError(reply, 401, {
         ok: false,
         code: "INVALID_CREDENTIALS",
@@ -665,11 +688,12 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
       });
     }
 
+    const adminEmail = await store.getAdminEmail();
     return reply.send({
       ok: true,
       data: {
-        token: createSessionToken(config.adminEmail, config.jwtSecret),
-        email: config.adminEmail
+        token: createSessionToken(adminEmail, config.jwtSecret),
+        email: adminEmail
       }
     });
   });
@@ -681,6 +705,69 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
       serverTime: new Date().toISOString()
     }
   }));
+
+  server.patch("/api/admin-credentials", async (request, reply) => {
+    if (!isAdminCredentialsBody(request.body)) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "INVALID_ADMIN_CREDENTIALS",
+        message: "Dados de acesso invalidos."
+      });
+    }
+
+    const email = request.body.email?.trim().toLowerCase() ?? "";
+    const currentPassword = request.body.currentPassword ?? "";
+    const newPassword =
+      request.body.newPassword && request.body.newPassword.length > 0
+        ? request.body.newPassword
+        : undefined;
+
+    if (!isValidAdminEmail(email)) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "INVALID_ADMIN_EMAIL",
+        message: "Informe um email valido."
+      });
+    }
+
+    if (!currentPassword) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "CURRENT_PASSWORD_REQUIRED",
+        message: "Informe a senha atual para alterar o acesso."
+      });
+    }
+
+    if (newPassword !== undefined && newPassword.length < 8) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "ADMIN_PASSWORD_TOO_SHORT",
+        message: "A nova senha precisa ter pelo menos 8 caracteres."
+      });
+    }
+
+    const currentEmail = await store.getAdminEmail();
+    if (!(await store.verifyAdminCredentials(currentEmail, currentPassword))) {
+      return apiError(reply, 401, {
+        ok: false,
+        code: "INVALID_CURRENT_PASSWORD",
+        message: "Senha atual invalida."
+      });
+    }
+
+    const account = await store.updateAdminCredentials({
+      email,
+      password: newPassword
+    });
+    const token = createSessionToken(account.email, config.jwtSecret);
+    return reply.send({
+      ok: true,
+      data: {
+        token,
+        email: account.email
+      }
+    });
+  });
 
   server.get("/api/schedules", async () => ({
     ok: true,

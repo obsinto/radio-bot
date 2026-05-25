@@ -66,6 +66,28 @@ export async function getState(token: string): Promise<DashboardState> {
   return parseResponse<DashboardState>(response);
 }
 
+export async function updateAdminCredentials(input: {
+  token: string;
+  email: string;
+  currentPassword: string;
+  newPassword?: string;
+}): Promise<LoginResult> {
+  const response = await fetch(`${API_URL}/api/admin-credentials`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      email: input.email,
+      currentPassword: input.currentPassword,
+      newPassword: input.newPassword
+    })
+  });
+
+  return parseResponse<LoginResult>(response);
+}
+
 export async function sendCommand(input: {
   token: string;
   deviceId: string;

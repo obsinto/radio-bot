@@ -104,6 +104,13 @@ type ScheduleRunRow = QueryResultRow & {
   command_ids: string[] | string | null;
 };
 
+type AdminSettingsRow = QueryResultRow & {
+  id: string;
+  email: string;
+  password_hash: string;
+  updated_at: Date | string;
+};
+
 export class PostgresStore {
   private constructor(
     private readonly pool: Pool,
@@ -131,16 +138,19 @@ export class PostgresStore {
   }
 
   async getDashboardState(): Promise<DashboardState> {
-    const [profiles, devices, wolGateways, commands, schedules, scheduleRuns] = await Promise.all([
-      this.listSafeProfiles(),
-      this.listSafeDevices(),
-      this.listSafeWolGateways(),
-      this.listRecentCommands(),
-      this.listSchedules(),
-      this.listRecentScheduleRuns()
-    ]);
+    const [adminEmail, profiles, devices, wolGateways, commands, schedules, scheduleRuns] =
+      await Promise.all([
+        this.getAdminEmail(),
+        this.listSafeProfiles(),
+        this.listSafeDevices(),
+        this.listSafeWolGateways(),
+        this.listRecentCommands(),
+        this.listSchedules(),
+        this.listRecentScheduleRuns()
+      ]);
 
     return {
+      adminEmail,
       profiles,
       devices,
       wolGateways,
@@ -148,6 +158,38 @@ export class PostgresStore {
       schedules,
       scheduleRuns
     };
+  }
+
+  async getAdminEmail(): Promise<string> {
+    const settings = await this.getAdminSettings();
+    return settings.email;
+  }
+
+  async verifyAdminCredentials(email: string, password: string): Promise<boolean> {
+    const settings = await this.getAdminSettings();
+    return (
+      this.normalizeAdminEmail(email) === settings.email &&
+      safeEqual(hashToken(password, this.config.encryptionKey), settings.password_hash)
+    );
+  }
+
+  async updateAdminCredentials(input: { email: string; password?: string }): Promise<{ email: string }> {
+    const settings = await this.getAdminSettings();
+    const email = this.normalizeAdminEmail(input.email);
+    const passwordHash =
+      input.password === undefined
+        ? settings.password_hash
+        : hashToken(input.password, this.config.encryptionKey);
+    const result = await this.pool.query<AdminSettingsRow>(
+      `
+        UPDATE admin_settings
+        SET email = $1, password_hash = $2, updated_at = NOW()
+        WHERE id = 'admin'
+        RETURNING *
+      `,
+      [email, passwordHash]
+    );
+    return { email: result.rows[0]?.email ?? email };
   }
 
   async listSafeProfiles(): Promise<SafeSiteProfile[]> {
@@ -1085,6 +1127,13 @@ export class PostgresStore {
 
   private async migrate(): Promise<void> {
     await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_settings (
+        id TEXT PRIMARY KEY CHECK (id = 'admin'),
+        email TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
       CREATE TABLE IF NOT EXISTS site_profiles (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -1191,6 +1240,18 @@ export class PostgresStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query(
+        `
+          INSERT INTO admin_settings (id, email, password_hash)
+          VALUES ('admin', $1, $2)
+          ON CONFLICT (id) DO NOTHING
+        `,
+        [
+          this.normalizeAdminEmail(this.config.adminEmail),
+          hashToken(this.config.adminPassword, this.config.encryptionKey)
+        ]
+      );
+
       for (const profile of this.config.profiles) {
         await client.query(
           `
@@ -1271,6 +1332,30 @@ export class PostgresStore {
     } finally {
       client.release();
     }
+  }
+
+  private async getAdminSettings(): Promise<AdminSettingsRow> {
+    const result = await this.pool.query<AdminSettingsRow>(
+      "SELECT * FROM admin_settings WHERE id = 'admin'"
+    );
+    if (result.rows[0]) {
+      return result.rows[0];
+    }
+
+    const created = await this.pool.query<AdminSettingsRow>(
+      `
+        INSERT INTO admin_settings (id, email, password_hash)
+        VALUES ('admin', $1, $2)
+        ON CONFLICT (id) DO UPDATE
+        SET email = admin_settings.email
+        RETURNING *
+      `,
+      [
+        this.normalizeAdminEmail(this.config.adminEmail),
+        hashToken(this.config.adminPassword, this.config.encryptionKey)
+      ]
+    );
+    return created.rows[0];
   }
 
   private profileFromRow(row: ProfileRow, includePassword: boolean): SiteProfile {
@@ -1460,5 +1545,9 @@ export class PostgresStore {
       return false;
     }
     return Date.now() - new Date(lastSeenAt).getTime() <= WOL_GATEWAY_FRESH_MS;
+  }
+
+  private normalizeAdminEmail(email: string): string {
+    return email.trim().toLowerCase();
   }
 }

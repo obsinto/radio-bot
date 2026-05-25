@@ -33,6 +33,7 @@ import {
   deleteSchedule,
   deleteWolGateway,
   runScheduleNow,
+  updateAdminCredentials,
   updateDevice,
   updateDeviceProfiles,
   updateDeviceWol,
@@ -43,7 +44,7 @@ import {
 import { Esp32Configurator } from "./Esp32Configurator.js";
 
 type ProfileMode = "direct" | "login";
-type Tab = "radios" | "devices" | "schedules" | "gateways";
+type Tab = "account" | "radios" | "devices" | "schedules" | "gateways";
 
 const weekDays = [
   { value: 0, label: "Dom" },
@@ -71,22 +72,25 @@ export function SettingsModal({
   dashboard,
   onClose,
   onNotice,
-  onRefresh
+  onRefresh,
+  onSession
 }: {
   token: string;
   dashboard: DashboardState;
   onClose: () => void;
   onNotice: (message: string | null, tone?: "error" | "success") => void;
   onRefresh: () => Promise<void>;
+  onSession: (session: { token: string; email: string }) => void;
 }) {
   const [activeTab, setActiveTab] = useState<Tab>("radios");
 
   const tabs: Array<{
     id: Tab;
     label: string;
-    count: number;
+    count?: number;
     icon: typeof Radio;
   }> = [
+    { id: "account", label: "Acesso", icon: KeyRound },
     { id: "radios", label: "Radios", count: dashboard.profiles.length, icon: Radio },
     { id: "devices", label: "Computadores", count: dashboard.devices.length, icon: Monitor },
     {
@@ -145,7 +149,7 @@ export function SettingsModal({
                 >
                   <Icon aria-hidden="true" />
                   <span>{tab.label}</span>
-                  <em>{tab.count}</em>
+                  {tab.count === undefined ? null : <em>{tab.count}</em>}
                 </button>
               );
             })}
@@ -164,6 +168,15 @@ export function SettingsModal({
           </div>
 
           <div className="settings-scroll-area">
+            {activeTab === "account" ? (
+              <AdminAccessTab
+                token={token}
+                email={dashboard.adminEmail}
+                onNotice={onNotice}
+                onRefresh={onRefresh}
+                onSession={onSession}
+              />
+            ) : null}
             {activeTab === "radios" ? (
               <RadiosTab
                 token={token}
@@ -205,6 +218,131 @@ export function SettingsModal({
           </div>
         </main>
       </section>
+    </div>
+  );
+}
+
+function AdminAccessTab({
+  token,
+  email,
+  onNotice,
+  onRefresh,
+  onSession
+}: {
+  token: string;
+  email: string;
+  onNotice: (message: string | null, tone?: "error" | "success") => void;
+  onRefresh: () => Promise<void>;
+  onSession: (session: { token: string; email: string }) => void;
+}) {
+  const [adminEmail, setAdminEmail] = useState(email);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setAdminEmail(email);
+  }, [email]);
+
+  async function submitAccess(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextEmail = adminEmail.trim().toLowerCase();
+    const nextPassword = newPassword.length > 0 ? newPassword : undefined;
+    if (nextPassword !== undefined && nextPassword !== confirmPassword) {
+      onNotice("A confirmacao da nova senha nao confere.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const session = await updateAdminCredentials({
+        token,
+        email: nextEmail,
+        currentPassword,
+        newPassword: nextPassword
+      });
+      onSession(session);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      onNotice("Acesso atualizado.", "success");
+      await onRefresh();
+    } catch (error) {
+      onNotice((error as ApiError).message ?? "Nao foi possivel atualizar o acesso.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="tab-container access-tab">
+      <form className="mini-form" onSubmit={submitAccess}>
+        <div className="form-heading">
+          <div>
+            <strong>Email e senha</strong>
+            <span>Atualize as credenciais usadas para entrar no painel.</span>
+          </div>
+        </div>
+
+        <div className="field-grid two-columns">
+          <label>
+            Email
+            <input
+              required
+              type="email"
+              name="adminEmail"
+              autoComplete="username"
+              value={adminEmail}
+              onChange={(event) => setAdminEmail(event.target.value)}
+              placeholder="admin@radio.local"
+            />
+          </label>
+          <label>
+            Senha atual
+            <input
+              required
+              type="password"
+              name="currentPassword"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              placeholder="senha atual"
+            />
+          </label>
+          <label>
+            Nova senha
+            <input
+              type="password"
+              name="newPassword"
+              autoComplete="new-password"
+              minLength={8}
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              placeholder="minimo 8 caracteres"
+            />
+          </label>
+          <label>
+            Confirmar nova senha
+            <input
+              type="password"
+              name="confirmPassword"
+              autoComplete="new-password"
+              minLength={8}
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              placeholder="repita a nova senha"
+            />
+          </label>
+        </div>
+
+        <div className="form-actions split-actions">
+          <button className="small-action" type="submit" disabled={saving}>
+            <Save aria-hidden="true" />
+            {saving ? "Salvando" : "Salvar acesso"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

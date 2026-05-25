@@ -25,6 +25,8 @@ import type { AppConfig } from "./config.js";
 const WOL_GATEWAY_FRESH_MS = 45000;
 
 export class AppStore {
+  private adminEmail: string;
+  private adminPassword: string;
   private readonly profiles = new Map<string, SiteProfile>();
   private readonly devices = new Map<string, Device>();
   private readonly wolGateways = new Map<string, WolGateway>();
@@ -33,6 +35,9 @@ export class AppStore {
   private readonly scheduleRuns = new Map<string, ScheduleRunRecord>();
 
   constructor(config: AppConfig) {
+    this.adminEmail = this.normalizeAdminEmail(config.adminEmail);
+    this.adminPassword = config.adminPassword;
+
     for (const profile of config.profiles) {
       this.profiles.set(profile.id, profile);
     }
@@ -62,6 +67,7 @@ export class AppStore {
 
   getDashboardState(): DashboardState {
     return {
+      adminEmail: this.adminEmail,
       profiles: this.listSafeProfiles(),
       devices: this.listSafeDevices(),
       wolGateways: this.listSafeWolGateways(),
@@ -69,6 +75,25 @@ export class AppStore {
       schedules: this.listSchedules(),
       scheduleRuns: this.listRecentScheduleRuns()
     };
+  }
+
+  getAdminEmail(): string {
+    return this.adminEmail;
+  }
+
+  verifyAdminCredentials(email: string, password: string): boolean {
+    return (
+      this.normalizeAdminEmail(email) === this.adminEmail &&
+      password === this.adminPassword
+    );
+  }
+
+  updateAdminCredentials(input: { email: string; password?: string }): { email: string } {
+    this.adminEmail = this.normalizeAdminEmail(input.email);
+    if (input.password !== undefined) {
+      this.adminPassword = input.password;
+    }
+    return { email: this.adminEmail };
   }
 
   listSafeProfiles(): SafeSiteProfile[] {
@@ -715,5 +740,9 @@ export class AppStore {
       return false;
     }
     return Date.now() - new Date(gateway.lastSeenAt).getTime() <= WOL_GATEWAY_FRESH_MS;
+  }
+
+  private normalizeAdminEmail(email: string): string {
+    return email.trim().toLowerCase();
   }
 }

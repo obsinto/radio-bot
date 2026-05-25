@@ -143,6 +143,7 @@ export type CommandRequest = {
 };
 
 export type DashboardState = {
+  adminEmail: string;
   serverTime?: string;
   profiles: SafeSiteProfile[];
   devices: SafeDevice[];
