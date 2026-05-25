@@ -248,7 +248,7 @@ export function isCommandAction(value: unknown): value is CommandAction {
 
 export function maskUsername(username: string): string {
   if (!username) {
-    return "nao configurado";
+    return "Link direto";
   }
 
   const [name, domain] = username.split("@");
