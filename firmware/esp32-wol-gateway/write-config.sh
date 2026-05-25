@@ -42,7 +42,6 @@ cat > "$output_path" <<EOF
 #define WOL_GATEWAY_ID "$(escape_c_string "$WOL_GATEWAY_ID")"
 #define WOL_GATEWAY_TOKEN "$(escape_c_string "$WOL_GATEWAY_TOKEN")"
 #define USE_CONFIG_H_SEED ${USE_CONFIG_H_SEED:-1}
-#define SERIAL_CONFIG_ONLY ${SERIAL_CONFIG_ONLY:-0}
 
 #define POLL_INTERVAL_MS ${POLL_INTERVAL_MS:-5000}
 #define WOL_PORT ${WOL_PORT:-9}

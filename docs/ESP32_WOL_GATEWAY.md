@@ -4,16 +4,13 @@ Este firmware transforma um ESP32 em ponte entre a VPS/Coolify e a rede local da
 
 ## Preparar Backend
 
-No painel:
+No painel, crie ou selecione o gateway para obter `WOL_GATEWAY_ID` e `WOL_GATEWAY_TOKEN`:
 
 1. Entre em `Configuracoes > Gateways WOL`.
-2. Clique em `Configurar ESP32 via USB`.
-3. Crie um gateway novo ou selecione um existente.
-4. Conecte o ESP32 no USB e permita o acesso serial no navegador.
-5. Informe Wi-Fi, confira a URL da API e grave a configuracao.
-6. Aguarde o painel validar `status` via serial e o gateway aparecer online.
-7. Configure o MAC do computador.
-8. Associe o computador ao gateway criado.
+2. Crie um gateway novo ou selecione um existente.
+3. Copie o ID e o token exibidos pelo painel.
+4. Configure o MAC do computador.
+5. Associe o computador ao gateway criado.
 
 Se selecionar gateway existente, o painel rotaciona o token antes de configurar. O token antigo para de funcionar ate o ESP32 ser reconfigurado.
 
@@ -23,20 +20,27 @@ Por padrao, nenhum gateway ESP32 e criado automaticamente. Para manter o seed li
 WOL_GATEWAYS_JSON=[]
 ```
 
-## Preparar Firmware Base
+## Preparar Firmware Com config.h
 
-O caminho recomendado e gravar o firmware base uma vez e configurar pelo painel via USB:
+O caminho recomendado agora e gerar `include/config.h` a partir do `.env` do firmware e gravar o ESP32 com esses valores embutidos. Sempre que mudar Wi-Fi, API, `WOL_GATEWAY_ID` ou `WOL_GATEWAY_TOKEN`, rode `./write-config.sh` novamente antes do upload:
 
 ```bash
+cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
+# edite firmware/esp32-wol-gateway/.env
+
 cd firmware/esp32-wol-gateway
-platformio run --target upload
+./write-config.sh
+pio run -t upload --upload-port /dev/ttyUSB0
+pio device monitor -p /dev/ttyUSB0 -b 115200
 ```
 
-Com `include/config.example.h`, o firmware base inicia sem credenciais persistentes e aguarda configuracao serial.
+O `include/config.h` local e ignorado pelo Git e tem precedencia sobre valores antigos gravados na NVS quando contem credenciais reais.
 
-## Configuracao Via Painel
+## Configuracao Via Painel USB
 
-Requisitos:
+A configuracao via painel/USB continua existindo no firmware para `hello`, `status`, `configure` e `reset_config`, mas deve ser tratada como experimental ate ser validada novamente em bancada. Para instalacao em producao, use o fluxo por `config.h`.
+
+Requisitos do fluxo USB:
 
 - Chrome, Edge ou Brave desktop.
 - Painel em HTTPS em producao.
@@ -52,19 +56,9 @@ Fluxo serial:
 
 O firmware nunca retorna `wifiPassword` nem `gatewayToken` em respostas seriais.
 
-## Fallback Por config.h
+## Configuracao Manual Por config.h
 
-Opcionalmente, gere `config.h` a partir do `.env` do firmware:
-
-```bash
-cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
-# edite firmware/esp32-wol-gateway/.env
-
-cd firmware/esp32-wol-gateway
-./write-config.sh
-```
-
-Ou manualmente:
+Alternativa manual equivalente ao `write-config.sh`:
 
 ```bash
 cd firmware/esp32-wol-gateway
@@ -80,10 +74,9 @@ Edite `include/config.h`:
 #define WOL_GATEWAY_ID "seu-wol-gateway-id"
 #define WOL_GATEWAY_TOKEN "token-gerado-no-painel"
 #define USE_CONFIG_H_SEED 1
-#define SERIAL_CONFIG_ONLY 0
 ```
 
-Nesse modo, o `config.h` local tem precedencia sobre a NVS. Ao atualizar token, gateway ou Wi-Fi no arquivo e regravar o firmware, o ESP32 passa a usar os novos valores mesmo se havia configuracao antiga gravada. Para forcar o fluxo somente pelo painel mesmo com `config.h` local, defina `SERIAL_CONFIG_ONLY 1`.
+Nesse modo, o `config.h` local tem precedencia sobre a NVS. Ao atualizar token, gateway ou Wi-Fi no arquivo e regravar o firmware, o ESP32 passa a usar os novos valores mesmo se havia configuracao antiga gravada.
 
 ## Build Manual
 

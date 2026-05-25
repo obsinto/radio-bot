@@ -79,9 +79,9 @@ platformio run --target upload
 platformio device monitor
 ```
 
-Com o firmware base, o ESP32 aguarda configuracao via USB pelo painel.
+Para producao, prefira gravar o ESP32 ja com `config.h` gerado. O fluxo via USB pelo painel existe, mas deve ser tratado como experimental ate nova validacao em bancada.
 
-## 6. Configurar Pelo Painel
+## 6. Configurar Pelo Painel USB
 
 1. Abra o painel em producao usando HTTPS.
 2. Entre em `Configuracoes > Gateways WOL`.
@@ -94,9 +94,9 @@ Com o firmware base, o ESP32 aguarda configuracao via USB pelo painel.
 
 Se escolher gateway existente, o painel rotaciona o token. Reconfigure o ESP32 logo em seguida, porque o token antigo deixa de autenticar.
 
-## 7. Fallback: Gerar Config Do Firmware
+## 7. Gerar Config Do Firmware
 
-Use somente se nao for configurar pelo Web Serial:
+Use este caminho para instalacao em producao:
 
 ```bash
 cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
@@ -113,7 +113,7 @@ WOL_GATEWAY_TOKEN=troque-token-esp32
 USE_CONFIG_H_SEED=1
 ```
 
-Gere o `config.h`:
+Gere o `config.h` sempre que alterar `.env`:
 
 ```bash
 cd firmware/esp32-wol-gateway
@@ -126,9 +126,9 @@ Isso cria `firmware/esp32-wol-gateway/include/config.h`, ignorado pelo Git.
 
 ```bash
 cd firmware/esp32-wol-gateway
-platformio run
-platformio run --target upload
-platformio device monitor
+pio run
+pio run -t upload --upload-port /dev/ttyUSB0
+pio device monitor -p /dev/ttyUSB0 -b 115200
 ```
 
 No monitor serial, o ESP32 deve mostrar Wi-Fi conectado e chamadas de polling para a API.

@@ -128,12 +128,16 @@ platformio run --target upload
 
 Ao reconfigurar gateway existente, o painel rotaciona o token. O token antigo para de funcionar ate o ESP32 ser configurado novamente.
 
-O fallback por `config.h` ainda existe para bancada ou ambientes sem Web Serial. Para usar esse modo, gere `include/config.h` com:
+O caminho manual por `config.h` e o mais previsivel para bancada ou ambientes sem Web Serial. Sempre que mudar Wi-Fi, API, `WOL_GATEWAY_ID` ou `WOL_GATEWAY_TOKEN` em `.env`, gere `include/config.h` novamente e regrave o ESP32:
 
 ```bash
 cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
+# edite firmware/esp32-wol-gateway/.env
+
 cd firmware/esp32-wol-gateway
 ./write-config.sh
+pio run -t upload --upload-port /dev/ttyUSB0
+pio device monitor -p /dev/ttyUSB0 -b 115200
 ```
 
 Por padrao, nenhum gateway ESP32 e criado automaticamente. Cadastre o gateway manualmente em `Configuracoes > Gateways WOL`.
