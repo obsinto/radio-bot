@@ -60,7 +60,8 @@ Opcionalmente, gere `config.h` a partir do `.env` do firmware:
 cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
 # edite firmware/esp32-wol-gateway/.env
 
-./scripts/firmware/write-esp32-config.sh
+cd firmware/esp32-wol-gateway
+./write-config.sh
 ```
 
 Ou manualmente:
@@ -79,9 +80,10 @@ Edite `include/config.h`:
 #define WOL_GATEWAY_ID "seu-wol-gateway-id"
 #define WOL_GATEWAY_TOKEN "token-gerado-no-painel"
 #define USE_CONFIG_H_SEED 1
+#define SERIAL_CONFIG_ONLY 0
 ```
 
-Nesse modo, o firmware grava esses valores como seed inicial na NVS no primeiro boot. Para voltar ao fluxo pelo painel, limpe a configuracao pelo wizard ou envie `reset_config` via serial.
+Nesse modo, o `config.h` local tem precedencia sobre a NVS. Ao atualizar token, gateway ou Wi-Fi no arquivo e regravar o firmware, o ESP32 passa a usar os novos valores mesmo se havia configuracao antiga gravada. Para forcar o fluxo somente pelo painel mesmo com `config.h` local, defina `SERIAL_CONFIG_ONLY 1`.
 
 ## Build Manual
 

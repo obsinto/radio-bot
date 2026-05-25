@@ -116,7 +116,8 @@ USE_CONFIG_H_SEED=1
 Gere o `config.h`:
 
 ```bash
-./scripts/firmware/write-esp32-config.sh
+cd firmware/esp32-wol-gateway
+./write-config.sh
 ```
 
 Isso cria `firmware/esp32-wol-gateway/include/config.h`, ignorado pelo Git.

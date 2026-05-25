@@ -41,6 +41,10 @@ class SerialJsonClient {
     await port.open({
       baudRate: 115200
     });
+    await port.setSignals?.({
+      dataTerminalReady: false,
+      requestToSend: false
+    }).catch(() => undefined);
 
     if (!port.readable || !port.writable) {
       throw new Error("Porta serial sem fluxo de leitura ou escrita.");

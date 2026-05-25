@@ -8,8 +8,10 @@
 #include <WiFiUdp.h>
 
 #if __has_include("config.h")
+#define RADIO_BOT_HAS_LOCAL_CONFIG 1
 #include "config.h"
 #else
+#define RADIO_BOT_HAS_LOCAL_CONFIG 0
 #include "config.example.h"
 #endif
 
@@ -19,6 +21,10 @@
 
 #ifndef USE_CONFIG_H_SEED
 #define USE_CONFIG_H_SEED 1
+#endif
+
+#ifndef SERIAL_CONFIG_ONLY
+#define SERIAL_CONFIG_ONLY 0
 #endif
 
 #ifndef POLL_INTERVAL_MS
@@ -103,17 +109,56 @@ String configString(const char* value) {
   return value ? String(value) : String("");
 }
 
-GatewayConfig configFromBuildFlags() {
+bool hasExampleBuildValues(const GatewayConfig& config) {
+  return config.wifiSsid == "sua-rede-wifi" ||
+         config.wifiPassword == "senha-da-rede" ||
+         config.apiBaseUrl == "https://api.seu-dominio.com" ||
+         config.gatewayId == "seu-wol-gateway-id" ||
+         config.gatewayId == "esp-studio-01" ||
+         config.gatewayToken == "token-gerado-no-painel";
+}
+
+bool shouldUseBuildConfig(const GatewayConfig& config) {
+#if SERIAL_CONFIG_ONLY
+  (void)config;
+  return false;
+#elif USE_CONFIG_H_SEED
+  (void)config;
+  return true;
+#elif RADIO_BOT_HAS_LOCAL_CONFIG
+  return isConfigured(config) && !hasExampleBuildValues(config);
+#else
+  (void)config;
+  return false;
+#endif
+}
+
+GatewayConfig readBuildConfig() {
   GatewayConfig config;
-#if USE_CONFIG_H_SEED
   config.wifiSsid = configString(WIFI_SSID);
   config.wifiPassword = configString(WIFI_PASSWORD);
   config.apiBaseUrl = normalizeApiBaseUrl(configString(API_BASE_URL));
   config.gatewayId = configString(WOL_GATEWAY_ID);
   config.gatewayToken = configString(WOL_GATEWAY_TOKEN);
   config.configuredAt = "build-seed";
-#endif
   return config;
+}
+
+GatewayConfig configFromBuildFlags() {
+  GatewayConfig config = readBuildConfig();
+  if (shouldUseBuildConfig(config)) {
+    return config;
+  }
+
+  return GatewayConfig{};
+}
+
+bool sameRuntimeConfig(const GatewayConfig& left, const GatewayConfig& right) {
+  return left.wifiSsid == right.wifiSsid &&
+         left.wifiPassword == right.wifiPassword &&
+         left.apiBaseUrl == right.apiBaseUrl &&
+         left.gatewayId == right.gatewayId &&
+         left.gatewayToken == right.gatewayToken;
 }
 
 void saveConfig(const GatewayConfig& config) {
@@ -127,25 +172,35 @@ void saveConfig(const GatewayConfig& config) {
   preferences.end();
 }
 
-GatewayConfig loadConfig() {
+String storedString(const char* key) {
+  return preferences.isKey(key) ? preferences.getString(key, "") : "";
+}
+
+GatewayConfig loadStoredConfig() {
   GatewayConfig config;
   preferences.begin(NVS_NAMESPACE, true);
-  config.wifiSsid = preferences.getString("wifi_ssid", "");
-  config.wifiPassword = preferences.getString("wifi_password", "");
-  config.apiBaseUrl = normalizeApiBaseUrl(preferences.getString("api_base_url", ""));
-  config.gatewayId = preferences.getString("gateway_id", "");
-  config.gatewayToken = preferences.getString("gateway_token", "");
-  config.configuredAt = preferences.getString("configured_at", "");
+  config.wifiSsid = storedString("wifi_ssid");
+  config.wifiPassword = storedString("wifi_password");
+  config.apiBaseUrl = normalizeApiBaseUrl(storedString("api_base_url"));
+  config.gatewayId = storedString("gateway_id");
+  config.gatewayToken = storedString("gateway_token");
+  config.configuredAt = storedString("configured_at");
   preferences.end();
+  return config;
+}
+
+GatewayConfig loadConfig() {
+  GatewayConfig config = loadStoredConfig();
+  GatewayConfig buildConfig = configFromBuildFlags();
+  if (isConfigured(buildConfig)) {
+    if (!sameRuntimeConfig(config, buildConfig)) {
+      saveConfig(buildConfig);
+    }
+    return buildConfig;
+  }
 
   if (isConfigured(config)) {
     return config;
-  }
-
-  GatewayConfig buildConfig = configFromBuildFlags();
-  if (isConfigured(buildConfig)) {
-    saveConfig(buildConfig);
-    return buildConfig;
   }
 
   return config;

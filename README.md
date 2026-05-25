@@ -132,7 +132,8 @@ O fallback por `config.h` ainda existe para bancada ou ambientes sem Web Serial.
 
 ```bash
 cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
-./scripts/firmware/write-esp32-config.sh
+cd firmware/esp32-wol-gateway
+./write-config.sh
 ```
 
 Por padrao, nenhum gateway ESP32 e criado automaticamente. Cadastre o gateway manualmente em `Configuracoes > Gateways WOL`.
