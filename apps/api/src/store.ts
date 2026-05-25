@@ -261,6 +261,36 @@ export class AppStore {
     return toSafeProfile(next);
   }
 
+  deleteProfile(profileId: string): boolean {
+    if (!this.profiles.has(profileId)) {
+      return false;
+    }
+
+    this.profiles.delete(profileId);
+    for (const device of this.devices.values()) {
+      device.profileIds = device.profileIds.filter((id) => id !== profileId);
+      if (device.currentProfileId === profileId) {
+        device.currentProfileId = null;
+        device.activeUrl = null;
+        device.title = null;
+      }
+    }
+    const deletedScheduleIds: string[] = [];
+    for (const [scheduleId, schedule] of this.schedules) {
+      if (schedule.profileId === profileId) {
+        this.schedules.delete(scheduleId);
+        deletedScheduleIds.push(scheduleId);
+      }
+    }
+    this.deleteScheduleRuns(deletedScheduleIds);
+    for (const [commandId, command] of this.commands) {
+      if (command.profileId === profileId) {
+        this.commands.delete(commandId);
+      }
+    }
+    return true;
+  }
+
   createDevice(input: {
     id?: string;
     name: string;
@@ -306,6 +336,28 @@ export class AppStore {
     return toSafeDevice(device);
   }
 
+  deleteDevice(deviceId: string): boolean {
+    if (!this.devices.has(deviceId)) {
+      return false;
+    }
+
+    this.devices.delete(deviceId);
+    const deletedScheduleIds: string[] = [];
+    for (const [scheduleId, schedule] of this.schedules) {
+      if (schedule.deviceId === deviceId) {
+        this.schedules.delete(scheduleId);
+        deletedScheduleIds.push(scheduleId);
+      }
+    }
+    this.deleteScheduleRuns(deletedScheduleIds);
+    for (const [commandId, command] of this.commands) {
+      if (command.deviceId === deviceId) {
+        this.commands.delete(commandId);
+      }
+    }
+    return true;
+  }
+
   createWolGateway(input: {
     id?: string;
     name: string;
@@ -328,6 +380,22 @@ export class AppStore {
     };
   }
 
+  rotateWolGatewayToken(gatewayId: string): (SafeWolGateway & { token: string }) | null {
+    const gateway = this.getWolGateway(gatewayId);
+    if (!gateway) {
+      return null;
+    }
+
+    const token = randomUUID();
+    gateway.token = token;
+    gateway.status = "offline";
+    gateway.lastSeenAt = null;
+    return {
+      ...toSafeWolGateway(gateway),
+      token
+    };
+  }
+
   updateWolGateway(
     gatewayId: string,
     update: Partial<Pick<WolGateway, "name" | "location">>
@@ -340,6 +408,20 @@ export class AppStore {
     gateway.name = update.name?.trim() ?? gateway.name;
     gateway.location = update.location?.trim() ?? gateway.location;
     return toSafeWolGateway(gateway);
+  }
+
+  deleteWolGateway(gatewayId: string): boolean {
+    if (!this.wolGateways.has(gatewayId)) {
+      return false;
+    }
+
+    this.wolGateways.delete(gatewayId);
+    for (const device of this.devices.values()) {
+      if (device.wolGatewayId === gatewayId) {
+        device.wolGatewayId = null;
+      }
+    }
+    return true;
   }
 
   getProfile(profileId: string): SiteProfile | null {
@@ -613,6 +695,19 @@ export class AppStore {
       index += 1;
     }
     return `${base}-${index}`;
+  }
+
+  private deleteScheduleRuns(scheduleIds: string[]): void {
+    if (scheduleIds.length === 0) {
+      return;
+    }
+
+    const ids = new Set(scheduleIds);
+    for (const [runId, run] of this.scheduleRuns) {
+      if (ids.has(run.scheduleId)) {
+        this.scheduleRuns.delete(runId);
+      }
+    }
   }
 
   private isGatewayFresh(gateway: WolGateway): boolean {

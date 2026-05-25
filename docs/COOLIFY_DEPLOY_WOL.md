@@ -37,14 +37,14 @@ JWT_SECRET=troque-por-uma-chave-longa
 ENCRYPTION_KEY=troque-por-uma-chave-longa-de-32-ou-mais-caracteres
 ADMIN_EMAIL=admin@radio.local
 ADMIN_PASSWORD=troque-esta-senha
-SITE_PROFILES_JSON=[{"id":"palmeirinha-fm","name":"Palmeirinha FM","siteUrl":"https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA","username":"","password":""}]
-DEVICES_JSON=[{"id":"studio-01","name":"Studio 01","location":"Local principal","token":"troque-token-agent","profileIds":["palmeirinha-fm"],"wolGatewayId":"esp-studio-01"}]
-WOL_GATEWAYS_JSON=[{"id":"esp-studio-01","name":"Gateway ESP32 Studio 01","location":"Local principal","token":"troque-token-esp32"}]
+SITE_PROFILES_JSON=[]
+DEVICES_JSON=[]
+WOL_GATEWAYS_JSON=[]
 ```
 
 Referencia local: `apps/api/.env.example`.
 
-Depois do primeiro deploy com PostgreSQL, novos cadastros feitos no painel ficam no banco.
+Com esses seeds vazios, apenas o acesso admin inicial e criado pelas variaveis acima. Cadastre radios, computadores e gateways ESP32 manualmente pelo painel. Com PostgreSQL, os cadastros feitos no painel ficam no banco.
 
 ## 3. Variaveis Do Web
 
@@ -69,9 +69,34 @@ curl -I https://api.seu-dominio.com/health
 
 Esperado: HTTP 200.
 
-## 5. Gerar Config Do Firmware
+## 5. Gravar Firmware Base Do ESP32
 
 Na maquina onde voce vai compilar/gravar o ESP32:
+
+```bash
+cd firmware/esp32-wol-gateway
+platformio run --target upload
+platformio device monitor
+```
+
+Com o firmware base, o ESP32 aguarda configuracao via USB pelo painel.
+
+## 6. Configurar Pelo Painel
+
+1. Abra o painel em producao usando HTTPS.
+2. Entre em `Configuracoes > Gateways WOL`.
+3. Clique em `Configurar ESP32 via USB`.
+4. Crie um gateway ou selecione um existente.
+5. Conecte o ESP32 no USB e permita o acesso serial no navegador.
+6. Confira se a URL exibida e a API, por exemplo `https://api.seu-dominio.com`.
+7. Informe Wi-Fi e grave a configuracao.
+8. Aguarde o gateway aparecer online.
+
+Se escolher gateway existente, o painel rotaciona o token. Reconfigure o ESP32 logo em seguida, porque o token antigo deixa de autenticar.
+
+## 7. Fallback: Gerar Config Do Firmware
+
+Use somente se nao for configurar pelo Web Serial:
 
 ```bash
 cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
@@ -83,8 +108,9 @@ Edite `firmware/esp32-wol-gateway/.env`:
 WIFI_SSID=nome-da-rede-local-da-radio
 WIFI_PASSWORD=senha-do-wifi
 API_BASE_URL=https://api.seu-dominio.com
-WOL_GATEWAY_ID=esp-studio-01
+WOL_GATEWAY_ID=seu-wol-gateway-id
 WOL_GATEWAY_TOKEN=troque-token-esp32
+USE_CONFIG_H_SEED=1
 ```
 
 Gere o `config.h`:
@@ -95,7 +121,7 @@ Gere o `config.h`:
 
 Isso cria `firmware/esp32-wol-gateway/include/config.h`, ignorado pelo Git.
 
-## 6. Build E Upload Do ESP32
+## 8. Build E Upload Com config.h
 
 ```bash
 cd firmware/esp32-wol-gateway
@@ -106,11 +132,11 @@ platformio device monitor
 
 No monitor serial, o ESP32 deve mostrar Wi-Fi conectado e chamadas de polling para a API.
 
-## 7. Teste Do Botao Ligar
+## 9. Teste Do Botao Ligar
 
 No painel:
 
-1. Abra `Configurar Wake on LAN`.
+1. Abra `Configuracoes > Gateways WOL`.
 2. Confirme que o gateway ESP32 aparece online.
 3. Configure o MAC do computador.
 4. Associe o computador ao gateway.

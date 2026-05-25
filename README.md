@@ -66,31 +66,41 @@ As credenciais dos perfis de radio sao salvas criptografadas com `ENCRYPTION_KEY
 
 ## Configuracao de Radios
 
-`SITE_PROFILES_JSON` recebe uma lista de perfis. Cada perfil representa uma radio ou conta do site:
+Por padrao, nenhuma radio e criada automaticamente. Cadastre as radios manualmente no painel.
+
+Se um dia quiser importar radios por ambiente, `SITE_PROFILES_JSON` aceita uma lista de perfis. Para manter o seed limpo:
 
 ```json
-[{"id":"palmeirinha-fm","name":"Palmeirinha FM","siteUrl":"https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA","username":"","password":""}]
+[]
 ```
 
-Com PostgreSQL ativo, essa lista funciona como seed inicial. Novas radios cadastradas pelo painel ficam salvas no banco.
+Com PostgreSQL ativo, novas radios cadastradas pelo painel ficam salvas no banco.
 
 ## Configuracao de Computadores
 
-Cada computador local precisa de um `DEVICE_ID` e `DEVICE_TOKEN` proprios. O painel tambem consegue gerar novos tokens ao cadastrar um computador:
+Por padrao, nenhum computador e criado automaticamente. Cadastre cada computador manualmente no painel para gerar `DEVICE_ID` e `DEVICE_TOKEN`.
 
 ```json
-[{"id":"studio-01","name":"Studio 01","location":"Local principal","token":"change-studio-01-token","profileIds":["palmeirinha-fm","oliveira-fm"],"wolGatewayId":"esp-studio-01"}]
+[]
 ```
 
 `profileIds` pode ter mais de uma radio para o mesmo computador. O painel usa essa lista para limitar quais radios aparecem nos comandos e agendamentos daquele computador.
 
-No computador local, configure:
+No computador local, prefira os instaladores interativos. Eles perguntam a URL WebSocket da API, `DEVICE_ID` e `DEVICE_TOKEN` no terminal e nao exigem token na linha de comando.
+
+Use sempre a URL da **API**, nao a URL do painel. Exemplo:
+
+- Painel web: `https://painel.seu-dominio.com`
+- API HTTP: `https://api.seu-dominio.com`
+- Agent WebSocket: `wss://api.seu-dominio.com/agent`
+
+As variaveis gravadas pelo instalador ficam assim:
 
 ```bash
-SERVER_URL=wss://seu-dominio.com/agent
-DEVICE_ID=studio-01
+SERVER_URL=wss://api.seu-dominio.com/agent
+DEVICE_ID=seu-device-id
 DEVICE_TOKEN=token-do-computador
-BROWSER_PROFILE_PATH=.cache/browser/studio-01
+BROWSER_PROFILE_PATH=.cache/browser/seu-device-id
 HEADLESS=false
 SHUTDOWN_DRY_RUN=false
 ```
@@ -101,37 +111,61 @@ O botao "Ligar computador" cria um comando `power_on` na API. O ESP32, instalado
 
 Fluxo:
 
-1. Cadastre um gateway ESP32 no painel em "Configurar Wake on LAN".
-2. Anote `WOL_GATEWAY_ID` e `WOL_GATEWAY_TOKEN` mostrados no painel.
-3. Configure o MAC do computador e associe ele ao gateway ESP32.
-4. Crie `firmware/esp32-wol-gateway/.env` a partir do exemplo:
+1. Grave o firmware base do ESP32 uma vez:
 
 ```bash
-cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
-```
-
-5. Preencha Wi-Fi, `API_BASE_URL`, `WOL_GATEWAY_ID` e `WOL_GATEWAY_TOKEN`.
-6. Gere o `config.h` e grave o ESP32:
-
-```bash
-./scripts/firmware/write-esp32-config.sh
 cd firmware/esp32-wol-gateway
 platformio run --target upload
 ```
 
-Para seed via ambiente, use:
+2. No painel, entre em `Configuracoes > Gateways WOL`.
+3. Clique em `Configurar ESP32 via USB`.
+4. Crie um gateway novo ou selecione um existente.
+5. Conecte o ESP32 no USB e permita o acesso serial no navegador.
+6. Confira a URL da API que sera gravada, informe Wi-Fi e grave.
+7. Aguarde o painel validar o `status` serial e o gateway aparecer online.
+8. Configure o MAC do computador e associe ele ao gateway ESP32.
+
+Ao reconfigurar gateway existente, o painel rotaciona o token. O token antigo para de funcionar ate o ESP32 ser configurado novamente.
+
+O fallback por `config.h` ainda existe para bancada ou ambientes sem Web Serial. Para usar esse modo, gere `include/config.h` com:
 
 ```bash
-WOL_GATEWAYS_JSON=[{"id":"esp-studio-01","name":"Gateway ESP32 Studio 01","location":"Local principal","token":"change-esp-studio-01-token"}]
+cp firmware/esp32-wol-gateway/.env.example firmware/esp32-wol-gateway/.env
+./scripts/firmware/write-esp32-config.sh
+```
+
+Por padrao, nenhum gateway ESP32 e criado automaticamente. Cadastre o gateway manualmente em `Configuracoes > Gateways WOL`.
+
+Para manter o seed limpo:
+
+```bash
+WOL_GATEWAYS_JSON=[]
 ```
 
 O computador precisa ter Wake-on-LAN habilitado na BIOS/UEFI e no sistema operacional. Use cabo Ethernet sempre que possivel; WOL por Wi-Fi costuma ser limitado.
 
-## Instalacao do Agente no Windows
+## Instalacao do Agente
 
-O instalador Windows esta em `scripts/windows/install-agent.ps1`.
+Linux:
 
-Documentacao completa: `docs/WINDOWS_AGENT_INSTALL.md`.
+```bash
+./scripts/linux/install-agent.sh
+```
+
+Windows:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\windows\install-agent.ps1
+```
+
+Os instaladores sao interativos e validam a conexao WebSocket antes de registrar o servico/tarefa. Se a URL apontar para o painel, a validacao mostra uma mensagem explicita como "essa URL parece ser o painel web, nao a API".
+
+Documentacao completa:
+
+- `docs/LINUX_AGENT_INSTALL.md`
+- `docs/WINDOWS_AGENT_INSTALL.md`
 
 ## Comandos do MVP
 
@@ -193,4 +227,4 @@ Variaveis do painel web:
 VITE_API_URL=https://api.seu-dominio.com
 ```
 
-Configure HTTPS no dominio publico e use `wss://api.seu-dominio.com/agent` nos agentes locais.
+Configure HTTPS no dominio publico e use `wss://api.seu-dominio.com/agent` nos agentes locais. Nao use a URL do painel web como `SERVER_URL` do agente.

@@ -23,21 +23,29 @@ Se ja tem, pula esse passo.
 ## 2. Rodar o instalador
 
 ```bash
-./scripts/linux/install-agent.sh \
-  --server-url wss://radio-api.agilytech.com/agent \
-  --device-id <seu-device-id> \
-  --device-token <seu-device-token>
+./scripts/linux/install-agent.sh
 ```
+
+O instalador vai perguntar, interativamente:
+
+- URL WebSocket da API, por exemplo `wss://api.seu-dominio.com/agent`.
+- `DEVICE_ID` do computador cadastrado no painel.
+- `DEVICE_TOKEN` do computador. O token nao aparece na tela.
+- Modo headless.
+- Se desligamento deve ser simulado com `SHUTDOWN_DRY_RUN`.
+
+Importante: use a URL da **API**, nao a URL do painel web. Se o painel for `https://radio.agilytech.com` e a API for `https://radio-api.agilytech.com`, o agente deve usar `wss://radio-api.agilytech.com/agent`.
 
 O script faz:
 
 1. `npm install` na raiz do repo.
 2. Build de `@radio-bot/shared` + `@radio-bot/agent`.
 3. `npx playwright install chromium` (~250MB no primeiro deploy).
-4. Escreve `apps/agent/.env` com as credenciais (chmod 600).
-5. Cria `~/.config/systemd/user/radio-bot-agent.service` apontando pra esta pasta.
-6. `sudo loginctl enable-linger $USER` (pede senha) — faz o servico subir no boot mesmo sem login.
-7. Habilita e inicia o servico.
+4. Valida a conexao WebSocket com a API antes de registrar o servico.
+5. Escreve `apps/agent/.env` com as credenciais (chmod 600).
+6. Cria `~/.config/systemd/user/radio-bot-agent.service` apontando pra esta pasta.
+7. `sudo loginctl enable-linger $USER` (pede senha) — faz o servico subir no boot mesmo sem login.
+8. Habilita e inicia o servico.
 
 ## 3. Verificar
 
@@ -57,14 +65,12 @@ No painel da VPS, o computador deve aparecer **online**.
 
 | Flag | Default | O que faz |
 | --- | --- | --- |
-| `--server-url URL` | obrigatorio | WebSocket da API (`wss://...`) |
-| `--device-id ID` | obrigatorio | ID do computador no painel |
-| `--device-token TOKEN` | obrigatorio | Token gerado pelo painel |
 | `--repo-dir PATH` | pasta atual | Raiz do repo Radio BOT |
-| `--headless true\|false` | `true` | Modo do navegador Playwright |
 | `--service-name NAME` | `radio-bot-agent` | Nome do servico systemd |
 | `--no-linger` | linger ON | Pula `loginctl enable-linger` |
 | `--skip-build` | build ON | Reaproveita build existente |
+
+`SERVER_URL`, `DEVICE_ID`, `DEVICE_TOKEN`, `HEADLESS` e `SHUTDOWN_DRY_RUN` sao perguntados no prompt. O instalador recusa `--server-url`, `--device-id`, `--device-token` e `--headless` para evitar credenciais/configuracao do agente no historico do shell.
 
 ## Atualizar para uma versao nova
 
@@ -81,9 +87,6 @@ Ou rode o instalador de novo passando `--skip-build` se quiser:
 
 ```bash
 ./scripts/linux/install-agent.sh \
-  --server-url wss://radio-api.agilytech.com/agent \
-  --device-id <id> \
-  --device-token <token> \
   --skip-build
 ```
 

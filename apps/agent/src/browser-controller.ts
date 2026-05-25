@@ -44,9 +44,11 @@ export class BrowserController {
           state: await this.getState()
         };
       }
+      const play = await this.playCurrentPage(profile);
       return {
         output: {
-          opened: true
+          opened: true,
+          play
         },
         state: await this.getState()
       };
@@ -64,9 +66,11 @@ export class BrowserController {
           state: await this.getState()
         };
       }
+      const play = await this.playCurrentPage(profile);
       return {
         output: {
-          loggedInAttempted: true
+          loggedInAttempted: true,
+          play
         },
         state: await this.getState()
       };
@@ -154,9 +158,11 @@ export class BrowserController {
         timeout: 15000
       }).catch(() => undefined);
       await page.waitForTimeout(1000);
+      const play = await this.playCurrentPage(profile);
       return {
         output: {
-          confirmedOpenHere: true
+          confirmedOpenHere: true,
+          play
         },
         state: await this.getState()
       };
@@ -236,12 +242,36 @@ export class BrowserController {
   }
 
   private async openSite(profile: SiteProfile): Promise<void> {
+    await this.pauseActiveMediaBeforeNavigation(profile.siteUrl);
     const page = await this.ensurePage(profile);
     await page.goto(profile.siteUrl, {
       waitUntil: "domcontentloaded",
       timeout: 30000
     });
     await page.waitForTimeout(1000);
+  }
+
+  private async pauseActiveMediaBeforeNavigation(targetUrl: string): Promise<void> {
+    const page = this.currentPage();
+    if (!page || !this.shouldOpenProfileUrl(page.url(), targetUrl)) {
+      return;
+    }
+
+    await this.pauseMediaElements(page).catch(() => undefined);
+  }
+
+  private currentPage(): Page | null {
+    if (this.page && !this.page.isClosed()) {
+      return this.page;
+    }
+
+    try {
+      this.page = this.context?.pages().find((page) => !page.isClosed()) ?? null;
+      return this.page;
+    } catch {
+      this.page = null;
+      return null;
+    }
   }
 
   private async detectSitePrompt(timeoutMs = 10000): Promise<SitePrompt | null> {
@@ -298,6 +328,11 @@ export class BrowserController {
       page = await this.ensurePage(profile);
     }
 
+    return this.playCurrentPage(profile, page);
+  }
+
+  private async playCurrentPage(profile: SiteProfile, currentPage?: Page): Promise<Record<string, unknown>> {
+    const page = currentPage ?? (await this.ensurePage(profile));
     const selectors = this.actionSelectors(profile, "play", [
       'button[aria-label*="play" i]',
       '[role="button"][aria-label*="play" i]',

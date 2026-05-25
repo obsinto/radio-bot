@@ -12,11 +12,13 @@ Permitir que o operador configure um ESP32 WOL Gateway pelo proprio painel web e
 2. Entra em `Configuracoes > Gateways WOL`.
 3. Clica em `Configurar ESP32 via USB`.
 4. O painel cria ou seleciona um gateway e obtem `WOL_GATEWAY_ID` + `WOL_GATEWAY_TOKEN`.
+   - Se selecionar gateway existente, o painel rotaciona o token antes de configurar.
 5. Operador conecta o ESP32 no USB do computador.
 6. Navegador pede permissao para acessar a porta serial.
-7. Painel envia Wi-Fi, URL da API, gateway ID e token para o ESP32.
-8. ESP32 salva a configuracao em memoria persistente e reinicia.
-9. Painel aguarda o gateway aparecer online.
+7. Painel mostra e valida a URL da API que sera gravada no ESP32.
+8. Painel envia Wi-Fi, URL da API, gateway ID e token para o ESP32.
+9. ESP32 salva a configuracao em memoria persistente e reinicia.
+10. Painel consulta `status` via serial e aguarda o gateway aparecer online.
 
 ## Escopo
 
@@ -83,7 +85,14 @@ Comando `hello`:
 Resposta:
 
 ```json
-{"type":"hello_result","ok":true,"firmwareVersion":"0.1.0","configured":false,"chipId":"..."}
+{
+  "type":"hello_result",
+  "ok":true,
+  "protocolVersion":1,
+  "firmwareVersion":"0.1.0",
+  "configured":false,
+  "chipId":"..."
+}
 ```
 
 Comando `configure`:
@@ -120,6 +129,7 @@ Resposta:
   "configured":true,
   "wifiConnected":true,
   "ip":"192.168.1.50",
+  "lastError":null,
   "apiBaseUrl":"https://radio-api.exemplo.com",
   "gatewayId":"esp-studio-01",
   "gatewayTokenSet":true
@@ -149,17 +159,23 @@ Passos:
 1. `Gateway`
    - Criar novo gateway ou escolher existente.
    - Para gateway novo, exibir o token somente durante o wizard.
+   - Para gateway existente, rotacionar token antes de enviar para o ESP32.
 2. `USB`
    - Botao `Conectar ESP32`.
    - Usar `navigator.serial.requestPort()`.
    - Abrir porta com baud rate 115200.
+   - Aguardar reset automatico do ESP32 apos abrir a porta.
+   - Enviar `hello` com retries e validar `protocolVersion`.
 3. `Wi-Fi`
    - Campos `SSID` e `Senha`.
    - `API_BASE_URL` preenchido automaticamente pela configuracao do app.
+   - Exibir a URL da API antes de gravar.
+   - Validar que a URL aponta para a API, nao para o painel web.
 4. `Gravar`
    - Enviar comando `configure`.
    - Exibir progresso e resposta do ESP32.
 5. `Validar`
+   - Consultar `status` via serial depois do reboot.
    - Aguardar API marcar gateway online.
    - Mostrar estado final: online/offline, IP se vier pelo serial, ultimo contato.
 
@@ -170,6 +186,7 @@ Estados de erro:
 - Porta serial ocupada.
 - ESP32 nao respondeu `hello`.
 - Firmware antigo sem suporte a configuracao serial.
+- Versao de protocolo serial incompativel.
 - Wi-Fi nao conecta.
 - API retorna credenciais invalidas.
 - Gateway nao aparece online apos timeout.
@@ -180,39 +197,48 @@ O backend ja cria gateway e retorna token uma vez. Para o wizard, adicionar ou c
 
 - Endpoint atual `POST /api/wol-gateways` continua sendo a fonte do token.
 - Estado do gateway em `/api/state` continua indicando online/offline.
-- Opcional: endpoint `POST /api/wol-gateways/:id/rotate-token` para reconfigurar ESP32 existente sem recriar gateway.
+- Endpoint obrigatorio `POST /api/wol-gateways/:id/rotate-token` para reconfigurar ESP32 existente sem recriar gateway.
+- Endpoint de rotacao deve retornar o novo token apenas na resposta da rotacao.
 
 Regras:
 
 - Token so deve aparecer no momento da criacao ou rotacao.
-- Se o wizard falhar depois de criar gateway, permitir tentar configurar novamente enquanto o token ainda estiver em memoria no frontend.
-- Se a pagina for recarregada, token deve ser considerado perdido e operador precisa criar/rotacionar outro token.
+- Se o wizard falhar depois de criar ou rotacionar gateway, permitir tentar configurar novamente enquanto o token ainda estiver em memoria no frontend.
+- Se a pagina for recarregada, token deve ser considerado perdido e operador precisa criar ou rotacionar outro token.
+- Rotacionar token invalida automaticamente qualquer ESP32 configurado anteriormente com o token antigo.
 
 ## Firmware: tarefas
 
-- [ ] Criar struct `GatewayConfig`.
-- [ ] Adicionar leitura/escrita em `Preferences`.
-- [ ] Trocar `API_BASE_URL`, `WOL_GATEWAY_ID`, `WOL_GATEWAY_TOKEN`, `WIFI_SSID` e `WIFI_PASSWORD` por valores de runtime.
-- [ ] Manter fallback opcional para `config.h` apenas como seed inicial.
-- [ ] Implementar parser JSON por linha na Serial.
-- [ ] Implementar comandos `hello`, `status`, `configure` e `reset_config`.
-- [ ] Validar tamanho maximo dos campos antes de salvar.
-- [ ] Reiniciar Wi-Fi depois de salvar configuracao.
-- [ ] Garantir que token e senha nunca sejam impressos no log.
-- [ ] Atualizar `platformio.ini` se precisar de bibliotecas extras.
+- [x] Criar struct `GatewayConfig`.
+- [x] Adicionar leitura/escrita em `Preferences`.
+- [x] Trocar `API_BASE_URL`, `WOL_GATEWAY_ID`, `WOL_GATEWAY_TOKEN`, `WIFI_SSID` e `WIFI_PASSWORD` por valores de runtime.
+- [x] Manter fallback opcional para `config.h` apenas como seed inicial.
+- [x] Implementar parser JSON por linha na Serial.
+- [x] Implementar comandos `hello`, `status`, `configure` e `reset_config`.
+- [x] Incluir `protocolVersion` no `hello_result`.
+- [x] Retornar `lastError` no `status` sem expor senha ou token.
+- [x] Validar tamanho maximo dos campos antes de salvar.
+- [x] Reiniciar Wi-Fi depois de salvar configuracao.
+- [x] Garantir que token e senha nunca sejam impressos no log.
+- [x] Atualizar `platformio.ini` se precisar de bibliotecas extras.
 
 ## Web: tarefas
 
-- [ ] Criar componente `Esp32Configurator`.
-- [ ] Detectar suporte a `navigator.serial`.
-- [ ] Criar fluxo de conectar/desconectar porta.
-- [ ] Implementar leitura de mensagens JSON por linha.
-- [ ] Implementar envio de comandos serial.
-- [ ] Integrar wizard na aba `Gateways WOL`.
-- [ ] Preencher `apiBaseUrl` automaticamente usando a URL da API configurada no frontend.
-- [ ] Criar fluxo de novo gateway com token temporario.
-- [ ] Criar validacao visual ate o gateway aparecer online.
-- [ ] Tratar erros de permissao, timeout e firmware incompatvel.
+- [x] Criar componente `Esp32Configurator`.
+- [x] Detectar suporte a `navigator.serial`.
+- [x] Criar fluxo de conectar/desconectar porta.
+- [x] Aguardar reset automatico do ESP32 apos abrir a porta serial.
+- [x] Implementar leitura de mensagens JSON por linha.
+- [x] Implementar envio de comandos serial.
+- [x] Implementar retries para `hello` com timeout.
+- [x] Validar `protocolVersion` antes de permitir configuracao.
+- [x] Integrar wizard na aba `Gateways WOL`.
+- [x] Preencher `apiBaseUrl` automaticamente usando a URL da API configurada no frontend.
+- [x] Exibir e validar `apiBaseUrl` antes de gravar, evitando URL do painel web.
+- [x] Criar fluxo de novo gateway com token temporario.
+- [x] Criar fluxo obrigatorio de rotacao de token para gateway existente.
+- [x] Criar validacao visual ate o gateway aparecer online.
+- [x] Tratar erros de permissao, timeout e firmware incompatvel.
 
 ## UX
 
@@ -232,6 +258,8 @@ Texto operacional curto:
 - `Conecte o ESP32 ao USB deste computador.`
 - `O navegador pedira permissao para acessar a porta serial.`
 - `O token sera exibido somente durante esta configuracao.`
+- `Confira a URL da API antes de gravar.`
+- `Ao reconfigurar um gateway existente, o token antigo sera invalidado.`
 
 ## Seguranca
 
@@ -249,12 +277,15 @@ Texto operacional curto:
 3. Abrir painel em producao no Chrome.
 4. Criar gateway pelo wizard.
 5. Conectar ESP32 via USB.
-6. Enviar configuracao.
-7. Confirmar que ESP32 reinicia.
-8. Confirmar no painel que gateway fica online.
-9. Associar computador ao gateway.
-10. Clicar em `Ligar computador`.
-11. Conferir envio do magic packet e resultado do comando.
+6. Confirmar que `hello_result.protocolVersion` e aceito.
+7. Conferir a URL da API exibida pelo wizard.
+8. Enviar configuracao.
+9. Confirmar que ESP32 reinicia.
+10. Consultar `status` via serial e confirmar `wifiConnected`.
+11. Confirmar no painel que gateway fica online.
+12. Associar computador ao gateway.
+13. Clicar em `Ligar computador`.
+14. Conferir envio do magic packet e resultado do comando.
 
 ## Riscos
 
@@ -262,6 +293,8 @@ Texto operacional curto:
 - Driver USB/serial pode faltar no Windows.
 - ESP32 pode estar com firmware antigo sem protocolo serial.
 - Token se perde se operador recarregar a pagina antes de gravar.
+- Rotacionar token de gateway existente derruba ESP32 configurado com token antigo ate reconfigurar.
+- URL errada do painel web gravada como API impede o gateway de autenticar.
 - Wi-Fi corporativo pode bloquear o ESP32 de acessar a API publica.
 
 ## Futuro

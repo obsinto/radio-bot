@@ -436,14 +436,6 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
             requestedBy
           })
         );
-        commandIds.push(
-          await sendAgentCommandAndWait({
-            deviceId: schedule.deviceId,
-            profile,
-            action: "play_radio",
-            requestedBy
-          })
-        );
       } else {
         const profile = await executionProfile(schedule);
         commandIds.push(
@@ -870,6 +862,25 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     });
   });
 
+  server.delete("/api/profiles/:profileId", async (request, reply) => {
+    const { profileId } = request.params as { profileId: string };
+    const deleted = await store.deleteProfile(profileId);
+    if (!deleted) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "PROFILE_NOT_FOUND",
+        message: "Radio nao encontrada."
+      });
+    }
+
+    return reply.send({
+      ok: true,
+      data: {
+        id: profileId
+      }
+    });
+  });
+
   server.patch("/api/devices/:deviceId/wol", async (request, reply) => {
     const { deviceId } = request.params as { deviceId: string };
     const body = request.body as
@@ -951,6 +962,23 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     });
   });
 
+  server.post("/api/wol-gateways/:gatewayId/rotate-token", async (request, reply) => {
+    const { gatewayId } = request.params as { gatewayId: string };
+    const gateway = await store.rotateWolGatewayToken(gatewayId);
+    if (!gateway) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "WOL_GATEWAY_NOT_FOUND",
+        message: "Gateway ESP32 nao encontrado."
+      });
+    }
+
+    return reply.send({
+      ok: true,
+      data: gateway
+    });
+  });
+
   server.patch("/api/wol-gateways/:gatewayId", async (request, reply) => {
     const { gatewayId } = request.params as { gatewayId: string };
     if (!isUpdateWolGatewayBody(request.body)) {
@@ -973,6 +1001,25 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     return reply.send({
       ok: true,
       data: gateway
+    });
+  });
+
+  server.delete("/api/wol-gateways/:gatewayId", async (request, reply) => {
+    const { gatewayId } = request.params as { gatewayId: string };
+    const deleted = await store.deleteWolGateway(gatewayId);
+    if (!deleted) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "WOL_GATEWAY_NOT_FOUND",
+        message: "Gateway ESP32 nao encontrado."
+      });
+    }
+
+    return reply.send({
+      ok: true,
+      data: {
+        id: gatewayId
+      }
     });
   });
 
@@ -1014,6 +1061,31 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     return reply.send({
       ok: true,
       data: device
+    });
+  });
+
+  server.delete("/api/devices/:deviceId", async (request, reply) => {
+    const { deviceId } = request.params as { deviceId: string };
+    const deleted = await store.deleteDevice(deviceId);
+    if (!deleted) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "DEVICE_NOT_FOUND",
+        message: "Computador nao encontrado."
+      });
+    }
+
+    const agent = agents.get(deviceId);
+    if (agent) {
+      agents.delete(deviceId);
+      agent.socket.close(1000, "device deleted");
+    }
+
+    return reply.send({
+      ok: true,
+      data: {
+        id: deviceId
+      }
     });
   });
 

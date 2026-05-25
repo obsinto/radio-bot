@@ -13,7 +13,7 @@ import type {
   ScheduleUpdate
 } from "@radio-bot/shared";
 
-const API_URL =
+export const API_URL =
   import.meta.env.VITE_API_URL ??
   `${window.location.protocol}//${window.location.hostname}:3000`;
 
@@ -136,6 +136,20 @@ export async function updateProfile(input: {
   return parseResponse<SafeSiteProfile>(response);
 }
 
+export async function deleteProfile(input: {
+  token: string;
+  profileId: string;
+}): Promise<{ id: string }> {
+  const response = await fetch(`${API_URL}/api/profiles/${input.profileId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${input.token}`
+    }
+  });
+
+  return parseResponse<{ id: string }>(response);
+}
+
 export async function createDevice(input: {
   token: string;
   name: string;
@@ -177,6 +191,20 @@ export async function updateDevice(input: {
   });
 
   return parseResponse<SafeDevice>(response);
+}
+
+export async function deleteDevice(input: {
+  token: string;
+  deviceId: string;
+}): Promise<{ id: string }> {
+  const response = await fetch(`${API_URL}/api/devices/${input.deviceId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${input.token}`
+    }
+  });
+
+  return parseResponse<{ id: string }>(response);
 }
 
 export async function updateDeviceProfiles(input: {
@@ -257,6 +285,20 @@ export async function createWolGateway(input: {
   return requireGatewayToken(await parseResponse<SafeWolGateway & { token?: string }>(response));
 }
 
+export async function rotateWolGatewayToken(input: {
+  token: string;
+  gatewayId: string;
+}): Promise<SafeWolGateway & { token: string }> {
+  const response = await fetch(`${API_URL}/api/wol-gateways/${input.gatewayId}/rotate-token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.token}`
+    }
+  });
+
+  return requireGatewayToken(await parseResponse<SafeWolGateway & { token?: string }>(response));
+}
+
 export async function updateWolGateway(input: {
   token: string;
   gatewayId: string;
@@ -276,6 +318,20 @@ export async function updateWolGateway(input: {
   });
 
   return parseResponse<SafeWolGateway>(response);
+}
+
+export async function deleteWolGateway(input: {
+  token: string;
+  gatewayId: string;
+}): Promise<{ id: string }> {
+  const response = await fetch(`${API_URL}/api/wol-gateways/${input.gatewayId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${input.token}`
+    }
+  });
+
+  return parseResponse<{ id: string }>(response);
 }
 
 export async function createSchedule(input: {

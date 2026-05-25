@@ -10,6 +10,7 @@ import {
   Save,
   Settings,
   Trash2,
+  Usb,
   X,
   Zap
 } from "lucide-react";
@@ -27,7 +28,10 @@ import {
   createProfile,
   createSchedule,
   createWolGateway,
+  deleteDevice,
+  deleteProfile,
   deleteSchedule,
+  deleteWolGateway,
   runScheduleNow,
   updateDevice,
   updateDeviceProfiles,
@@ -36,12 +40,10 @@ import {
   updateSchedule,
   updateWolGateway
 } from "./api.js";
+import { Esp32Configurator } from "./Esp32Configurator.js";
 
 type ProfileMode = "direct" | "login";
 type Tab = "radios" | "devices" | "schedules" | "gateways";
-
-const palmeirinhaUrl =
-  "https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA";
 
 const weekDays = [
   { value: 0, label: "Dom" },
@@ -226,6 +228,7 @@ function RadiosTab({
   const [creating, setCreating] = useState(false);
   const [recentProfileId, setRecentProfileId] = useState<string | null>(null);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [deletingProfileId, setDeletingProfileId] = useState<string | null>(null);
 
   const normalizedName = profileName.trim().toLocaleLowerCase("pt-BR");
   const normalizedUrl = siteUrl.trim();
@@ -248,22 +251,6 @@ function RadiosTab({
     setUsername("");
     setPassword("");
     setEditingProfileId(null);
-  }
-
-  function fillPalmeirinhaPreset() {
-    setProfileName("Palmeirinha FM");
-    setProfileMode("direct");
-    setSiteUrl(palmeirinhaUrl);
-    setUsername("");
-    setPassword("");
-  }
-
-  function fillOliveiraPreset() {
-    setProfileName("Oliveira FM");
-    setProfileMode("direct");
-    setSiteUrl("https://www.oliveirafm.com.br/");
-    setUsername("");
-    setPassword("");
   }
 
   async function submitProfile(event: React.FormEvent<HTMLFormElement>) {
@@ -313,6 +300,30 @@ function RadiosTab({
     setPassword("");
   }
 
+  async function removeProfile(profile: SafeSiteProfile) {
+    const confirmed = window.confirm(
+      `Excluir a radio "${profile.name}"?\n\nIsso tambem remove vinculos, comandos e agendamentos relacionados a ela.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingProfileId(profile.id);
+    try {
+      await deleteProfile({ token, profileId: profile.id });
+      if (editingProfileId === profile.id) {
+        clearForm();
+      }
+      setRecentProfileId((current) => (current === profile.id ? null : current));
+      onNotice("Radio excluida.", "success");
+      await onRefresh();
+    } catch (error) {
+      onNotice((error as ApiError).message ?? "Nao foi possivel excluir a radio.");
+    } finally {
+      setDeletingProfileId(null);
+    }
+  }
+
   return (
     <div className="tab-container radio-tab">
       <form className="mini-form radio-form" onSubmit={submitProfile}>
@@ -322,7 +333,7 @@ function RadiosTab({
             <span>
               {editingProfileId
                 ? "A edicao altera nome e URL sem mexer nas credenciais salvas."
-                : "Escolha um modelo ou preencha uma URL propria."}
+                : "Preencha a URL e, se necessario, as credenciais de login."}
             </span>
           </div>
           <button className="ghost-button compact-action" type="button" onClick={clearForm}>
@@ -331,41 +342,22 @@ function RadiosTab({
         </div>
 
         {!editingProfileId ? (
-          <>
-            <div className="preset-grid" aria-label="Modelos de radio">
-              <button className="preset-card" type="button" onClick={fillPalmeirinhaPreset}>
-                <Radio aria-hidden="true" />
-                <span>
-                  <strong>Palmeirinha FM</strong>
-                  <em>Link direto do player</em>
-                </span>
-              </button>
-              <button className="preset-card secondary-preset" type="button" onClick={fillOliveiraPreset}>
-                <Radio aria-hidden="true" />
-                <span>
-                  <strong>Oliveira FM</strong>
-                  <em>Site publico, usar Play</em>
-                </span>
-              </button>
-            </div>
-
-            <div className="segmented-control" role="radiogroup" aria-label="Tipo de acesso">
-              <button
-                type="button"
-                className={profileMode === "direct" ? "active" : ""}
-                onClick={() => setProfileMode("direct")}
-              >
-                Link direto
-              </button>
-              <button
-                type="button"
-                className={profileMode === "login" ? "active" : ""}
-                onClick={() => setProfileMode("login")}
-              >
-                Login
-              </button>
-            </div>
-          </>
+          <div className="segmented-control" role="radiogroup" aria-label="Tipo de acesso">
+            <button
+              type="button"
+              className={profileMode === "direct" ? "active" : ""}
+              onClick={() => setProfileMode("direct")}
+            >
+              Link direto
+            </button>
+            <button
+              type="button"
+              className={profileMode === "login" ? "active" : ""}
+              onClick={() => setProfileMode("login")}
+            >
+              Login
+            </button>
+          </div>
         ) : null}
 
         <div className="field-grid two-columns">
@@ -374,9 +366,9 @@ function RadiosTab({
             <input
               required
               name="profileName"
-              value={profileName}
-              onChange={(event) => setProfileName(event.target.value)}
-              placeholder="Palmeirinha FM"
+	              value={profileName}
+	              onChange={(event) => setProfileName(event.target.value)}
+	              placeholder="Nome da radio"
             />
           </label>
           <label>
@@ -384,9 +376,9 @@ function RadiosTab({
             <input
               required
               name="siteUrl"
-              value={siteUrl}
-              onChange={(event) => setSiteUrl(event.target.value)}
-              placeholder={palmeirinhaUrl}
+	              value={siteUrl}
+	              onChange={(event) => setSiteUrl(event.target.value)}
+	              placeholder="https://..."
             />
           </label>
           {!editingProfileId && profileMode === "login" ? (
@@ -457,14 +449,23 @@ function RadiosTab({
             </header>
             <p className="muted">{profile.siteUrl}</p>
             {profile.hasCredentials ? <p className="muted">Usuario: {profile.usernameLabel}</p> : null}
-            <div className="form-actions">
-              <button className="ghost-button" type="button" onClick={() => startProfileEdit(profile)}>
-                <Pencil aria-hidden="true" />
-                Editar
-              </button>
-            </div>
-          </article>
-        ))}
+	            <div className="form-actions">
+	              <button className="ghost-button" type="button" onClick={() => startProfileEdit(profile)}>
+	                <Pencil aria-hidden="true" />
+	                Editar
+	              </button>
+	              <button
+	                className="danger-button"
+	                type="button"
+	                disabled={deletingProfileId === profile.id}
+	                onClick={() => removeProfile(profile)}
+	              >
+	                <Trash2 aria-hidden="true" />
+	                {deletingProfileId === profile.id ? "Excluindo" : "Excluir"}
+	              </button>
+	            </div>
+	          </article>
+	        ))}
       </section>
     </div>
   );
@@ -506,6 +507,7 @@ function DevicesTab({
     >
   >({});
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [deletingDeviceId, setDeletingDeviceId] = useState<string | null>(null);
 
   useEffect(() => {
     setDrafts((current) => {
@@ -623,6 +625,33 @@ function DevicesTab({
     }
   }
 
+  async function removeDevice(device: SafeDevice) {
+    const onlineWarning = device.status === "online" ? "\n\nO agente conectado sera desconectado." : "";
+    const confirmed = window.confirm(
+      `Excluir o computador "${device.name}"?${onlineWarning}\n\nIsso tambem remove comandos e agendamentos relacionados a ele.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingDeviceId(device.id);
+    try {
+      await deleteDevice({ token, deviceId: device.id });
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[device.id];
+        return next;
+      });
+      setGeneratedToken((current) => (current?.deviceId === device.id ? null : current));
+      onNotice("Computador excluido.", "success");
+      await onRefresh();
+    } catch (error) {
+      onNotice((error as ApiError).message ?? "Nao foi possivel excluir o computador.");
+    } finally {
+      setDeletingDeviceId(null);
+    }
+  }
+
   return (
     <div className="tab-container">
       <form className="mini-form" onSubmit={submitDevice}>
@@ -722,9 +751,9 @@ function DevicesTab({
               </header>
 
               <div className="config-subgrid">
-                <div className="config-block">
-                  <strong>Identificacao</strong>
-                  <label>
+	                <div className="config-block">
+	                  <strong>Identificacao</strong>
+	                  <label>
                     Nome
                     <input
                       name={`device-name-${device.id}`}
@@ -748,12 +777,31 @@ function DevicesTab({
                           [device.id]: { ...draft, location: event.target.value }
                         }))
                       }
-                    />
-                  </label>
-                </div>
+	                    />
+	                  </label>
+	                </div>
 
-                <div className="config-block">
-                  <strong>Radios vinculadas</strong>
+	                <div className="config-block">
+	                  <strong>Credenciais do agente</strong>
+	                  <div className="token-box inline-token-box">
+	                    <KeyRound aria-hidden="true" />
+	                    <div>
+	                      <p>Use estes dados no instalador deste computador:</p>
+	                      <code>
+	                        DEVICE_ID={device.id}
+	                        {"\n"}DEVICE_TOKEN={device.agentToken ?? "indisponivel"}
+	                      </code>
+	                      {device.agentToken ? null : (
+	                        <p className="field-note compact-note">
+	                          Token antigo armazenado apenas como hash. Recrie o computador para visualizar.
+	                        </p>
+	                      )}
+	                    </div>
+	                  </div>
+	                </div>
+
+	                <div className="config-block">
+	                  <strong>Radios vinculadas</strong>
                   {profiles.length === 0 ? (
                     <p className="muted">Nenhuma radio cadastrada.</p>
                   ) : (
@@ -832,12 +880,21 @@ function DevicesTab({
                   className="small-action"
                   disabled={savingId === device.id}
                   onClick={() => save(device.id)}
-                >
-                  <Save aria-hidden="true" />
-                  {savingId === device.id ? "Salvando" : "Salvar configuracoes"}
-                </button>
-              </div>
-            </article>
+	                >
+	                  <Save aria-hidden="true" />
+	                  {savingId === device.id ? "Salvando" : "Salvar configuracoes"}
+	                </button>
+	                <button
+	                  type="button"
+	                  className="danger-button"
+	                  disabled={deletingDeviceId === device.id}
+	                  onClick={() => removeDevice(device)}
+	                >
+	                  <Trash2 aria-hidden="true" />
+	                  {deletingDeviceId === device.id ? "Excluindo" : "Excluir"}
+	                </button>
+	              </div>
+	            </article>
           );
         })}
       </div>
@@ -1219,6 +1276,8 @@ function GatewaysTab({
     Record<string, { name: string; location: string }>
   >({});
   const [savingGatewayId, setSavingGatewayId] = useState<string | null>(null);
+  const [deletingGatewayId, setDeletingGatewayId] = useState<string | null>(null);
+  const [showConfigurator, setShowConfigurator] = useState(false);
 
   useEffect(() => {
     setGatewayDrafts((current) => {
@@ -1278,11 +1337,60 @@ function GatewaysTab({
     }
   }
 
+  async function removeGateway(gateway: SafeWolGateway) {
+    const linkedDevices = devices.filter((device) => device.wolGatewayId === gateway.id);
+    const linkedWarning =
+      linkedDevices.length > 0
+        ? `\n\nEle sera desvinculado de ${linkedDevices.length} computador(es).`
+        : "";
+    const confirmed = window.confirm(`Excluir o gateway "${gateway.name}"?${linkedWarning}`);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingGatewayId(gateway.id);
+    try {
+      await deleteWolGateway({ token, gatewayId: gateway.id });
+      setGatewayDrafts((current) => {
+        const next = { ...current };
+        delete next[gateway.id];
+        return next;
+      });
+      setGeneratedGateway((current) => (current?.gatewayId === gateway.id ? null : current));
+      onNotice("Gateway excluido.", "success");
+      await onRefresh();
+    } catch (error) {
+      onNotice((error as ApiError).message ?? "Nao foi possivel excluir o gateway.");
+    } finally {
+      setDeletingGatewayId(null);
+    }
+  }
+
   return (
     <div className="tab-container">
       <p className="wol-hint">
         Gateways ESP32 enviam Wake on LAN na rede. O local fica no cadastro de cada computador.
       </p>
+
+      <div className="form-actions">
+        <button
+          className="small-action"
+          type="button"
+          onClick={() => setShowConfigurator((current) => !current)}
+        >
+          <Usb aria-hidden="true" />
+          {showConfigurator ? "Fechar configurador" : "Configurar ESP32 via USB"}
+        </button>
+      </div>
+
+      {showConfigurator ? (
+        <Esp32Configurator
+          sessionToken={token}
+          gateways={gateways}
+          onNotice={onNotice}
+          onRefresh={onRefresh}
+        />
+      ) : null}
 
       <form className="mini-form" onSubmit={submitGateway}>
         <div className="form-heading">
@@ -1380,11 +1488,20 @@ function GatewaysTab({
                   disabled={savingGatewayId === gateway.id}
                   onClick={() => saveGateway(gateway.id)}
                 >
-                  <Save aria-hidden="true" />
-                  {savingGatewayId === gateway.id ? "Salvando" : "Salvar gateway"}
-                </button>
-              </div>
-            </article>
+	                  <Save aria-hidden="true" />
+	                  {savingGatewayId === gateway.id ? "Salvando" : "Salvar gateway"}
+	                </button>
+	                <button
+	                  className="danger-button"
+	                  type="button"
+	                  disabled={deletingGatewayId === gateway.id}
+	                  onClick={() => removeGateway(gateway)}
+	                >
+	                  <Trash2 aria-hidden="true" />
+	                  {deletingGatewayId === gateway.id ? "Excluindo" : "Excluir"}
+	                </button>
+	              </div>
+	            </article>
           );
         })}
       </div>

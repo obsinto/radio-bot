@@ -36,12 +36,22 @@ function parseActionMap(): Record<string, string> {
   }
 }
 
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} obrigatorio. Cadastre o computador no painel e configure o agente.`);
+  }
+  return value;
+}
+
 export function loadConfig(): AgentConfig {
+  const deviceId = requiredEnv("DEVICE_ID");
+
   return {
     serverUrl: process.env.SERVER_URL ?? "ws://localhost:3000/agent",
-    deviceId: process.env.DEVICE_ID ?? "studio-01",
-    deviceToken: process.env.DEVICE_TOKEN ?? "change-studio-01-token",
-    browserProfilePath: process.env.BROWSER_PROFILE_PATH ?? ".cache/browser/studio-01",
+    deviceId,
+    deviceToken: requiredEnv("DEVICE_TOKEN"),
+    browserProfilePath: process.env.BROWSER_PROFILE_PATH ?? `.cache/browser/${deviceId}`,
     headless: process.env.HEADLESS === "true",
     shutdownDryRun: process.env.SHUTDOWN_DRY_RUN === "true",
     actionMap: parseActionMap()

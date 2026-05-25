@@ -40,6 +40,7 @@ cat > "$output_path" <<EOF
 #define API_BASE_URL "$(escape_c_string "$API_BASE_URL")"
 #define WOL_GATEWAY_ID "$(escape_c_string "$WOL_GATEWAY_ID")"
 #define WOL_GATEWAY_TOKEN "$(escape_c_string "$WOL_GATEWAY_TOKEN")"
+#define USE_CONFIG_H_SEED ${USE_CONFIG_H_SEED:-1}
 
 #define POLL_INTERVAL_MS ${POLL_INTERVAL_MS:-5000}
 #define WOL_PORT ${WOL_PORT:-9}

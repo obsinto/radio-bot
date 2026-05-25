@@ -365,6 +365,16 @@ button:disabled {
   font-size: 0.76rem;
 }
 
+.inline-token-box {
+  margin-top: 2px;
+}
+
+.compact-note {
+  margin-top: 8px;
+  padding: 8px;
+  font-size: 0.78rem;
+}
+
 .control-surface {
   min-width: 0;
   padding: 22px;
@@ -715,6 +725,10 @@ h1 {
 .danger-button {
   min-height: 42px;
   padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   font-weight: 850;
 }
 
@@ -1192,6 +1206,128 @@ h1 {
 .form-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+.esp-configurator {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: #f8faf6;
+  border: 1px solid var(--line);
+}
+
+.esp-configurator-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.esp-configurator-head span:first-child {
+  color: var(--blue);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.esp-configurator-head h4 {
+  margin: 2px 0 0;
+  font-size: 1rem;
+  line-height: 1.18;
+}
+
+.esp-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.esp-steps span {
+  min-width: 0;
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-align: center;
+}
+
+.esp-steps span.active {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: rgba(45, 113, 135, 0.1);
+}
+
+.esp-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.esp-usb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.esp-status-line,
+.esp-validation-strip span,
+.esp-message-log span {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.esp-status-line {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.esp-status-line svg,
+.esp-validation-strip svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.esp-validation-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.esp-validation-strip span,
+.esp-message-log span {
+  min-height: 30px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.esp-error {
+  margin: 0;
+  padding: 9px 10px;
+  color: var(--red);
+  background: rgba(173, 53, 45, 0.1);
+  border: 1px solid rgba(173, 53, 45, 0.22);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.esp-message-log {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .day-picker {
@@ -1315,9 +1451,14 @@ h1 {
   .command-strip,
   .admin-modal-grid,
   .field-grid.two-columns,
+  .esp-config-grid,
   .config-subgrid,
   .preset-grid {
     grid-template-columns: 1fr;
+  }
+
+  .esp-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .settings-backdrop {

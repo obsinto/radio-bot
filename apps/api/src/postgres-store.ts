@@ -33,6 +33,7 @@ type DeviceRow = QueryResultRow & {
   name: string;
   location: string;
   token_hash: string;
+  token_cipher: string | null;
   profile_ids: string[] | null;
   status: string;
   last_seen_at: Date | string | null;
@@ -49,6 +50,7 @@ type WolGatewayRow = QueryResultRow & {
   name: string;
   location: string;
   token_hash: string;
+  token_cipher: string | null;
   status: string;
   last_seen_at: Date | string | null;
 };
@@ -415,6 +417,38 @@ export class PostgresStore {
     return result.rows[0] ? toSafeProfile(this.profileFromRow(result.rows[0], false)) : null;
   }
 
+  async deleteProfile(profileId: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const exists = await client.query("SELECT 1 FROM site_profiles WHERE id = $1", [profileId]);
+      if ((exists.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+
+      await client.query("DELETE FROM commands WHERE profile_id = $1", [profileId]);
+      await client.query("DELETE FROM schedules WHERE profile_id = $1", [profileId]);
+      await client.query("DELETE FROM device_profiles WHERE profile_id = $1", [profileId]);
+      await client.query(
+        `
+          UPDATE devices
+          SET current_profile_id = NULL, active_url = NULL, title = NULL, updated_at = NOW()
+          WHERE current_profile_id = $1
+        `,
+        [profileId]
+      );
+      await client.query("DELETE FROM site_profiles WHERE id = $1", [profileId]);
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async createDevice(input: {
     id?: string;
     name: string;
@@ -432,14 +466,15 @@ export class PostgresStore {
       await client.query("BEGIN");
       await client.query(
         `
-          INSERT INTO devices (id, name, location, token_hash, status, wol_gateway_id)
-          VALUES ($1, $2, $3, $4, 'offline', NULL)
+          INSERT INTO devices (id, name, location, token_hash, token_cipher, status, wol_gateway_id)
+          VALUES ($1, $2, $3, $4, $5, 'offline', NULL)
         `,
         [
           id,
           input.name.trim(),
           input.location.trim(),
-          hashToken(token, this.config.encryptionKey)
+          hashToken(token, this.config.encryptionKey),
+          encryptSecret(token, this.config.encryptionKey)
         ]
       );
 
@@ -498,6 +533,29 @@ export class PostgresStore {
     return device ? toSafeDevice(device) : null;
   }
 
+  async deleteDevice(deviceId: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const exists = await client.query("SELECT 1 FROM devices WHERE id = $1", [deviceId]);
+      if ((exists.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+
+      await client.query("DELETE FROM commands WHERE device_id = $1", [deviceId]);
+      await client.query("DELETE FROM schedules WHERE device_id = $1", [deviceId]);
+      await client.query("DELETE FROM devices WHERE id = $1", [deviceId]);
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async createWolGateway(input: {
     id?: string;
     name: string;
@@ -508,14 +566,15 @@ export class PostgresStore {
 
     await this.pool.query(
       `
-        INSERT INTO wol_gateways (id, name, location, token_hash, status)
-        VALUES ($1, $2, $3, $4, 'offline')
+        INSERT INTO wol_gateways (id, name, location, token_hash, token_cipher, status)
+        VALUES ($1, $2, $3, $4, $5, 'offline')
       `,
       [
         id,
         input.name.trim(),
         input.location.trim(),
-        hashToken(token, this.config.encryptionKey)
+        hashToken(token, this.config.encryptionKey),
+        encryptSecret(token, this.config.encryptionKey)
       ]
     );
 
@@ -526,6 +585,36 @@ export class PostgresStore {
 
     return {
       ...toSafeWolGateway(gateway),
+      token
+    };
+  }
+
+  async rotateWolGatewayToken(gatewayId: string): Promise<(SafeWolGateway & { token: string }) | null> {
+    const token = randomUUID();
+    const result = await this.pool.query<WolGatewayRow>(
+      `
+        UPDATE wol_gateways
+        SET token_hash = $2,
+            token_cipher = $3,
+            status = 'offline',
+            last_seen_at = NULL,
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [
+        gatewayId,
+        hashToken(token, this.config.encryptionKey),
+        encryptSecret(token, this.config.encryptionKey)
+      ]
+    );
+
+    if (!result.rows[0]) {
+      return null;
+    }
+
+    return {
+      ...toSafeWolGateway(this.wolGatewayFromRow(result.rows[0])),
       token
     };
   }
@@ -554,6 +643,31 @@ export class PostgresStore {
     );
 
     return result.rows[0] ? toSafeWolGateway(this.wolGatewayFromRow(result.rows[0])) : null;
+  }
+
+  async deleteWolGateway(gatewayId: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const exists = await client.query("SELECT 1 FROM wol_gateways WHERE id = $1", [gatewayId]);
+      if ((exists.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+
+      await client.query(
+        "UPDATE devices SET wol_gateway_id = NULL, updated_at = NOW() WHERE wol_gateway_id = $1",
+        [gatewayId]
+      );
+      await client.query("DELETE FROM wol_gateways WHERE id = $1", [gatewayId]);
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getProfile(profileId: string): Promise<SiteProfile | null> {
@@ -986,6 +1100,7 @@ export class PostgresStore {
         name TEXT NOT NULL,
         location TEXT NOT NULL,
         token_hash TEXT NOT NULL,
+        token_cipher TEXT,
         status TEXT NOT NULL DEFAULT 'offline',
         last_seen_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1063,6 +1178,8 @@ export class PostgresStore {
       ALTER TABLE devices ADD COLUMN IF NOT EXISTS mac_address TEXT;
       ALTER TABLE devices ADD COLUMN IF NOT EXISTS broadcast_address TEXT;
       ALTER TABLE devices ADD COLUMN IF NOT EXISTS wol_gateway_id TEXT REFERENCES wol_gateways(id) ON DELETE SET NULL;
+      ALTER TABLE devices ADD COLUMN IF NOT EXISTS token_cipher TEXT;
+      ALTER TABLE wol_gateways ADD COLUMN IF NOT EXISTS token_cipher TEXT;
     `);
 
     await this.pool.query(
@@ -1094,15 +1211,16 @@ export class PostgresStore {
       for (const gateway of this.config.wolGateways) {
         await client.query(
           `
-            INSERT INTO wol_gateways (id, name, location, token_hash, status)
-            VALUES ($1, $2, $3, $4, 'offline')
+            INSERT INTO wol_gateways (id, name, location, token_hash, token_cipher, status)
+            VALUES ($1, $2, $3, $4, $5, 'offline')
             ON CONFLICT (id) DO NOTHING
           `,
           [
             gateway.id,
             gateway.name,
             gateway.location,
-            hashToken(gateway.token, this.config.encryptionKey)
+            hashToken(gateway.token, this.config.encryptionKey),
+            encryptSecret(gateway.token, this.config.encryptionKey)
           ]
         );
       }
@@ -1110,8 +1228,8 @@ export class PostgresStore {
       for (const device of this.config.devices) {
         await client.query(
           `
-            INSERT INTO devices (id, name, location, token_hash, status, wol_gateway_id)
-            VALUES ($1, $2, $3, $4, 'offline', $5)
+            INSERT INTO devices (id, name, location, token_hash, token_cipher, status, wol_gateway_id)
+            VALUES ($1, $2, $3, $4, $5, 'offline', $6)
             ON CONFLICT (id) DO NOTHING
           `,
           [
@@ -1119,6 +1237,7 @@ export class PostgresStore {
             device.name,
             device.location,
             hashToken(device.token, this.config.encryptionKey),
+            encryptSecret(device.token, this.config.encryptionKey),
             device.wolGatewayId ?? null
           ]
         );
@@ -1168,10 +1287,10 @@ export class PostgresStore {
 
   private deviceFromRow(row: DeviceRow): Device {
     return {
-      id: row.id,
-      name: row.name,
-      location: row.location,
-      token: "",
+	      id: row.id,
+	      name: row.name,
+	      location: row.location,
+	      token: row.token_cipher ? decryptSecret(row.token_cipher, this.config.encryptionKey) : "",
       profileIds: row.profile_ids ?? [],
       status: row.status === "online" ? "online" : "offline",
       lastSeenAt: this.toIso(row.last_seen_at),

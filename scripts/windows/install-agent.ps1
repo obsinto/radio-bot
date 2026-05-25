@@ -1,29 +1,26 @@
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$ServerUrl,
-
-  [Parameter(Mandatory = $true)]
-  [string]$DeviceId,
-
-  [Parameter(Mandatory = $true)]
-  [string]$DeviceToken,
-
   [string]$InstallDir = "C:\RadioBOT",
 
   [string]$BrowserProfilePath = "",
-
-  [ValidateSet("true", "false")]
-  [string]$Headless = "false",
-
-  [ValidateSet("true", "false")]
-  [string]$ShutdownDryRun = "false",
 
   [string]$ActionMapJson = "{}",
 
   [string]$TaskName = "RadioBOTAgent",
 
-  [switch]$SkipDependencyInstall
+  [switch]$SkipDependencyInstall,
+
+  [string]$ServerUrl = "",
+
+  [string]$DeviceId = "",
+
+  [string]$DeviceToken = "",
+
+  [ValidateSet("", "true", "false")]
+  [string]$Headless = "",
+
+  [ValidateSet("", "true", "false")]
+  [string]$ShutdownDryRun = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,6 +28,14 @@ $ErrorActionPreference = "Stop"
 function Assert-Windows {
   if (-not $IsWindows -and $PSVersionTable.PSEdition -eq "Core") {
     throw "Este instalador deve ser executado no Windows."
+  }
+}
+
+function Assert-NoInlineAgentConfig {
+  foreach ($name in @("ServerUrl", "DeviceId", "DeviceToken", "Headless", "ShutdownDryRun")) {
+    if ($PSBoundParameters.ContainsKey($name)) {
+      throw "Parametro -$name nao e mais aceito. Execute o instalador sem credenciais/configuracao do agente na linha de comando; ele vai perguntar os dados interativamente."
+    }
   }
 }
 
@@ -56,6 +61,249 @@ function Resolve-NativeCommand {
   }
 
   throw $InstallHint
+}
+
+function Read-RequiredText {
+  param(
+    [string]$Prompt,
+    [string]$Default = ""
+  )
+
+  while ($true) {
+    if ([string]::IsNullOrWhiteSpace($Default)) {
+      $value = Read-Host $Prompt
+    } else {
+      $value = Read-Host "$Prompt [$Default]"
+      if ([string]::IsNullOrWhiteSpace($value)) {
+        $value = $Default
+      }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($value)) {
+      return $value.Trim()
+    }
+
+    Write-Host "Valor obrigatorio." -ForegroundColor Yellow
+  }
+}
+
+function ConvertTo-PlainText {
+  param([securestring]$Value)
+
+  $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+  try {
+    return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+  } finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+  }
+}
+
+function Read-RequiredSecret {
+  param(
+    [string]$Prompt,
+    [string]$CurrentValue = ""
+  )
+
+  while ($true) {
+    if ([string]::IsNullOrWhiteSpace($CurrentValue)) {
+      $secure = Read-Host $Prompt -AsSecureString
+    } else {
+      $secure = Read-Host "$Prompt [ENTER para manter o atual]" -AsSecureString
+      if ($secure.Length -eq 0) {
+        return $CurrentValue
+      }
+    }
+
+    $plain = ConvertTo-PlainText $secure
+    if (-not [string]::IsNullOrWhiteSpace($plain)) {
+      return $plain
+    }
+
+    Write-Host "Valor obrigatorio." -ForegroundColor Yellow
+  }
+}
+
+function Read-BooleanString {
+  param(
+    [string]$Prompt,
+    [string]$Default
+  )
+
+  if ($Default -ne "true" -and $Default -ne "false") {
+    $Default = "false"
+  }
+
+  $suffix = "s/N"
+  if ($Default -eq "true") {
+    $suffix = "S/n"
+  }
+
+  while ($true) {
+    $answer = Read-Host "$Prompt [$suffix]"
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+      return $Default
+    }
+
+    switch ($answer.Trim().ToLowerInvariant()) {
+      { $_ -in @("s", "sim", "y", "yes", "true", "1") } { return "true" }
+      { $_ -in @("n", "nao", "no", "false", "0") } { return "false" }
+      default { Write-Host "Responda sim ou nao." -ForegroundColor Yellow }
+    }
+  }
+}
+
+function Read-AgentEnv {
+  param([string]$EnvFile)
+
+  $values = @{}
+  if (-not (Test-Path $EnvFile)) {
+    return $values
+  }
+
+  foreach ($line in Get-Content $EnvFile) {
+    if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith("#") -or -not $line.Contains("=")) {
+      continue
+    }
+
+    $separatorIndex = $line.IndexOf("=")
+    $key = $line.Substring(0, $separatorIndex)
+    $value = $line.Substring($separatorIndex + 1)
+    $values[$key] = $value
+  }
+
+  return $values
+}
+
+function Assert-WebSocketUrlFormat {
+  param([string]$Value)
+
+  try {
+    $uri = [Uri]$Value
+  } catch {
+    throw "SERVER_URL invalida. Use ws:// ou wss:// e a rota /agent da API."
+  }
+
+  if ($uri.Scheme -ne "ws" -and $uri.Scheme -ne "wss") {
+    throw "SERVER_URL invalida. Use ws:// ou wss:// e a rota /agent da API."
+  }
+
+  if (-not $uri.AbsolutePath.Contains("/agent")) {
+    Write-Host "[aviso] A URL do agente normalmente termina com /agent." -ForegroundColor Yellow
+    Write-Host "[aviso] Exemplo: wss://api.seu-dominio.com/agent" -ForegroundColor Yellow
+  }
+}
+
+function Test-AgentWebSocket {
+  param(
+    [string]$Node,
+    [string]$ServerUrl,
+    [string]$DeviceId,
+    [string]$DeviceToken
+  )
+
+  Write-Host "[check] validando WebSocket da API"
+
+  $script = @'
+import WebSocket from "ws";
+
+const serverUrl = process.env.RADIO_BOT_TEST_SERVER_URL ?? "";
+const deviceId = process.env.RADIO_BOT_TEST_DEVICE_ID ?? "";
+const token = process.env.RADIO_BOT_TEST_DEVICE_TOKEN ?? "";
+
+let url;
+try {
+  url = new URL(serverUrl);
+} catch (error) {
+  console.error(`Falha WebSocket: SERVER_URL invalida (${error.message}).`);
+  process.exit(2);
+}
+
+url.searchParams.set("deviceId", deviceId);
+url.searchParams.set("token", token);
+
+let settled = false;
+let socket;
+const finish = (code, message) => {
+  if (settled) {
+    return;
+  }
+  settled = true;
+  clearTimeout(timer);
+  if (message) {
+    (code === 0 ? console.log : console.error)(message);
+  }
+  try {
+    socket?.close();
+  } catch {
+  }
+  process.exit(code);
+};
+
+const timer = setTimeout(() => {
+  finish(3, "Falha WebSocket: timeout aguardando confirmacao da API.");
+}, 8000);
+
+socket = new WebSocket(url, { handshakeTimeout: 8000 });
+
+socket.on("message", (raw) => {
+  try {
+    const message = JSON.parse(raw.toString());
+    if (message.type === "registered") {
+      finish(0, `[check] WebSocket registrado como ${message.deviceId}.`);
+    }
+  } catch {
+  }
+});
+
+socket.on("unexpected-response", (_request, response) => {
+  const contentType = String(response.headers["content-type"] ?? "");
+  let message = `Falha WebSocket: servidor respondeu HTTP ${response.statusCode}`;
+  if (contentType) {
+    message += ` (${contentType})`;
+  }
+  message += ".";
+
+  if (response.statusCode === 200 && contentType.includes("text/html")) {
+    message += "\nEssa URL parece ser o painel web, nao a API. Use a URL WebSocket da API, por exemplo wss://api.seu-dominio.com/agent.";
+  } else if (response.statusCode === 404) {
+    message += "\nA rota /agent nao foi encontrada. Confira o dominio da API e o proxy.";
+  } else if (response.statusCode === 502 || response.statusCode === 503 || response.statusCode === 504) {
+    message += "\nA API ou o proxy reverso nao esta aceitando a conexao agora.";
+  }
+
+  finish(4, message);
+});
+
+socket.on("close", (code, reasonBuffer) => {
+  if (settled) {
+    return;
+  }
+  const reason = reasonBuffer.toString();
+  if (code === 1008) {
+    finish(5, "Falha WebSocket: DEVICE_ID ou DEVICE_TOKEN recusado pela API.");
+    return;
+  }
+  finish(6, `Falha WebSocket: conexao fechada antes do registro (codigo ${code}${reason ? `, ${reason}` : ""}).`);
+});
+
+socket.on("error", (error) => {
+  finish(7, `Falha WebSocket: ${error.message}`);
+});
+'@
+
+  try {
+    $env:RADIO_BOT_TEST_SERVER_URL = $ServerUrl
+    $env:RADIO_BOT_TEST_DEVICE_ID = $DeviceId
+    $env:RADIO_BOT_TEST_DEVICE_TOKEN = $DeviceToken
+    & $Node "--input-type=module" "-e" $script
+    if ($LASTEXITCODE -ne 0) {
+      throw "Validacao WebSocket falhou. Ajuste a URL/API/credenciais e rode o instalador novamente."
+    }
+  } finally {
+    Remove-Item Env:RADIO_BOT_TEST_SERVER_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:RADIO_BOT_TEST_DEVICE_ID -ErrorAction SilentlyContinue
+    Remove-Item Env:RADIO_BOT_TEST_DEVICE_TOKEN -ErrorAction SilentlyContinue
+  }
 }
 
 function Invoke-NativeCommand {
@@ -113,6 +361,7 @@ function Copy-Project {
 }
 
 Assert-Windows
+Assert-NoInlineAgentConfig
 Assert-CommandExists "robocopy"
 
 $Node = Resolve-NativeCommand `
@@ -129,17 +378,51 @@ Invoke-NativeCommand -FilePath $Node -Arguments @("--version") -Step "Validando 
 Invoke-NativeCommand -FilePath $Npm -Arguments @("--version") -Step "Validando npm"
 
 $SourceRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$InstallDir = Read-RequiredText -Prompt "Pasta de instalacao" -Default $InstallDir
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $InstallDir = (Resolve-Path $InstallDir).Path
+$ExistingEnv = Read-AgentEnv -EnvFile (Join-Path $InstallDir ".env")
+
+Write-Host ""
+Write-Host "[config] Instalacao interativa do Radio BOT Agent"
+Write-Host "[config] Use a URL da API, nao a URL do painel."
+Write-Host "[config] Exemplo: wss://api.seu-dominio.com/agent"
+Write-Host ""
+
+$ServerUrl = Read-RequiredText -Prompt "URL WebSocket da API" -Default $ExistingEnv["SERVER_URL"]
+$DeviceId = Read-RequiredText -Prompt "Device ID do computador" -Default $ExistingEnv["DEVICE_ID"]
+$DeviceToken = Read-RequiredSecret -Prompt "Device token" -CurrentValue $ExistingEnv["DEVICE_TOKEN"]
+$TaskName = Read-RequiredText -Prompt "Nome da tarefa agendada" -Default $TaskName
 
 Copy-Project -SourceRoot $SourceRoot -DestinationRoot $InstallDir
 
 if ([string]::IsNullOrWhiteSpace($BrowserProfilePath)) {
-  $BrowserProfilePath = Join-Path $InstallDir "browser-profile"
+  if (-not [string]::IsNullOrWhiteSpace($ExistingEnv["BROWSER_PROFILE_PATH"])) {
+    $BrowserProfilePath = $ExistingEnv["BROWSER_PROFILE_PATH"]
+  } else {
+    $BrowserProfilePath = Join-Path $InstallDir "browser-profile"
+  }
 }
+
+$BrowserProfilePath = Read-RequiredText -Prompt "Perfil persistente do Chromium" -Default $BrowserProfilePath
+$Headless = Read-BooleanString -Prompt "Rodar navegador em modo invisivel/headless?" -Default $(if ($ExistingEnv.ContainsKey("HEADLESS")) { $ExistingEnv["HEADLESS"] } else { "false" })
+$ShutdownDryRun = Read-BooleanString -Prompt "Simular desligamento do computador (SHUTDOWN_DRY_RUN)?" -Default $(if ($ExistingEnv.ContainsKey("SHUTDOWN_DRY_RUN")) { $ExistingEnv["SHUTDOWN_DRY_RUN"] } else { "false" })
+
+Assert-WebSocketUrlFormat -Value $ServerUrl
 
 New-Item -ItemType Directory -Force -Path $BrowserProfilePath | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "logs") | Out-Null
+
+Set-Location $InstallDir
+
+if (-not $SkipDependencyInstall) {
+  Invoke-NativeCommand -FilePath $Npm -Arguments @("install") -Step "Instalando dependencias"
+  Invoke-NativeCommand -FilePath $Npx -Arguments @("playwright", "install", "chromium") -Step "Instalando Chromium Playwright"
+  Invoke-NativeCommand -FilePath $Npm -Arguments @("run", "build", "-w", "@radio-bot/shared") -Step "Compilando pacote compartilhado"
+  Invoke-NativeCommand -FilePath $Npm -Arguments @("run", "build", "-w", "@radio-bot/agent") -Step "Compilando agente"
+}
+
+Test-AgentWebSocket -Node $Node -ServerUrl $ServerUrl -DeviceId $DeviceId -DeviceToken $DeviceToken
 
 $EnvFile = Join-Path $InstallDir ".env"
 @"
@@ -151,15 +434,6 @@ HEADLESS=$Headless
 SHUTDOWN_DRY_RUN=$ShutdownDryRun
 ACTION_MAP_JSON=$ActionMapJson
 "@ | Set-Content -Path $EnvFile -Encoding utf8
-
-Set-Location $InstallDir
-
-if (-not $SkipDependencyInstall) {
-  Invoke-NativeCommand -FilePath $Npm -Arguments @("install") -Step "Instalando dependencias"
-  Invoke-NativeCommand -FilePath $Npx -Arguments @("playwright", "install", "chromium") -Step "Instalando Chromium Playwright"
-  Invoke-NativeCommand -FilePath $Npm -Arguments @("run", "build", "-w", "@radio-bot/shared") -Step "Compilando pacote compartilhado"
-  Invoke-NativeCommand -FilePath $Npm -Arguments @("run", "build", "-w", "@radio-bot/agent") -Step "Compilando agente"
-}
 
 $RunScript = Join-Path $InstallDir "scripts\windows\run-agent.ps1"
 if (-not (Test-Path $RunScript)) {

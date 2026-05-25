@@ -72,7 +72,9 @@ export type Device = {
   wolGatewayId: string | null;
 };
 
-export type SafeDevice = Omit<Device, "token">;
+export type SafeDevice = Omit<Device, "token"> & {
+  agentToken: string | null;
+};
 
 export type CommandPayload = {
   actionKey?: string;
@@ -267,7 +269,10 @@ export function toSafeProfile(profile: SiteProfile): SafeSiteProfile {
 
 export function toSafeDevice(device: Device): SafeDevice {
   const { token: _token, ...safe } = device;
-  return safe;
+  return {
+    ...safe,
+    agentToken: device.token || null
+  };
 }
 
 export function toSafeWolGateway(gateway: WolGateway): SafeWolGateway {

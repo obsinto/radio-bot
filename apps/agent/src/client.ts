@@ -84,11 +84,30 @@ export function startAgent(config: AgentConfig): void {
       }
     });
 
-    socket.on("close", () => {
+    socket.on("unexpected-response", (_request, response) => {
+      const contentType = String(response.headers["content-type"] ?? "");
+      console.error(
+        `[agent] falha WebSocket: servidor respondeu HTTP ${response.statusCode}${
+          contentType ? ` (${contentType})` : ""
+        }.`
+      );
+
+      if (response.statusCode === 200 && contentType.includes("text/html")) {
+        console.error(
+          "[agent] a SERVER_URL parece apontar para o painel web, nao para a API. Use a URL da API, por exemplo wss://api.seu-dominio.com/agent."
+        );
+      }
+    });
+
+    socket.on("close", (code, reason) => {
       if (heartbeat) {
         clearInterval(heartbeat);
       }
-      console.log("[agent] desconectado; tentando novamente em 5s");
+      if (code === 1008) {
+        console.error("[agent] credenciais recusadas pela API. Confira DEVICE_ID e DEVICE_TOKEN.");
+      }
+      const suffix = code ? ` (codigo ${code}${reason.length > 0 ? `, ${reason.toString()}` : ""})` : "";
+      console.log(`[agent] desconectado${suffix}; tentando novamente em 5s`);
       setTimeout(connect, 5000);
     });
 

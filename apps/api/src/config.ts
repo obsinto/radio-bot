@@ -59,47 +59,10 @@ export type AppConfig = {
   wolGateways: WolGatewaySeed[];
 };
 
-const defaultRadioSiteUrl =
-  "https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA";
-
 export function loadConfig(): AppConfig {
-  const profiles = parseJsonEnv<SiteProfile[]>("SITE_PROFILES_JSON") ?? [
-    {
-      id: "palmeirinha-fm",
-      name: "Palmeirinha FM",
-      siteUrl: process.env.SITE_URL ?? defaultRadioSiteUrl,
-      username: process.env.SITE_USERNAME ?? "",
-      password: process.env.SITE_PASSWORD ?? ""
-    }
-  ];
-
-  const defaultProfileIds = profiles.map((profile) => profile.id);
-  const wolGateways = parseJsonEnv<WolGatewaySeed[]>("WOL_GATEWAYS_JSON") ?? [
-    {
-      id: "esp-studio-01",
-      name: "Gateway ESP32 Studio 01",
-      location: "Local principal",
-      token: process.env.WOL_GATEWAY_TOKEN_STUDIO_01 ?? "change-esp-studio-01-token"
-    }
-  ];
-
-  const devices = parseJsonEnv<DeviceSeed[]>("DEVICES_JSON") ?? [
-    {
-      id: "studio-01",
-      name: "Studio 01",
-      location: "Local principal",
-      token: process.env.DEVICE_TOKEN_STUDIO_01 ?? "change-studio-01-token",
-      profileIds: defaultProfileIds,
-      wolGatewayId: "esp-studio-01"
-    },
-    {
-      id: "studio-02",
-      name: "Studio 02",
-      location: "Segundo local",
-      token: process.env.DEVICE_TOKEN_STUDIO_02 ?? "change-studio-02-token",
-      profileIds: defaultProfileIds
-    }
-  ];
+  const profiles = parseJsonEnv<SiteProfile[]>("SITE_PROFILES_JSON") ?? [];
+  const wolGateways = parseJsonEnv<WolGatewaySeed[]>("WOL_GATEWAYS_JSON") ?? [];
+  const devices = parseJsonEnv<DeviceSeed[]>("DEVICES_JSON") ?? [];
 
   return {
     port: Number(process.env.PORT || 3000),

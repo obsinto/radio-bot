@@ -22,12 +22,22 @@ No PowerShell, dentro da pasta do projeto:
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 
-.\scripts\windows\install-agent.ps1 `
-  -ServerUrl "wss://api.seu-dominio.com/agent" `
-  -DeviceId "studio-01" `
-  -DeviceToken "token-gerado-no-painel" `
-  -ShutdownDryRun "false"
+.\scripts\windows\install-agent.ps1
 ```
+
+O instalador vai perguntar, interativamente:
+
+- URL WebSocket da API, por exemplo `wss://api.seu-dominio.com/agent`.
+- `DEVICE_ID` do computador cadastrado no painel.
+- `DEVICE_TOKEN` do computador. O token nao aparece na tela.
+- Nome da tarefa agendada.
+- Pasta do perfil persistente do Chromium.
+- Se o navegador roda headless.
+- Se desligamento deve ser simulado com `SHUTDOWN_DRY_RUN`.
+
+Importante: use a URL da **API**, nao a URL do painel web. Se o painel for `https://radio.agilytech.com` e a API for `https://radio-api.agilytech.com`, o agente deve usar `wss://radio-api.agilytech.com/agent`.
+
+O instalador recusa `-ServerUrl`, `-DeviceId`, `-DeviceToken`, `-Headless` e `-ShutdownDryRun`; esses dados sao informados apenas pelo prompt interativo.
 
 Por padrao, o instalador usa:
 
@@ -37,16 +47,15 @@ Por padrao, o instalador usa:
 - Browser visivel: `HEADLESS=false`
 - Desligamento real: `SHUTDOWN_DRY_RUN=false`
 
-Para validar sem permitir desligamento da maquina, instale com `-ShutdownDryRun "true"`.
+Para validar sem permitir desligamento da maquina, responda `sim` na pergunta de `SHUTDOWN_DRY_RUN`.
 
 ## Instalacao Local Para Teste
 
 ```powershell
-.\scripts\windows\install-agent.ps1 `
-  -ServerUrl "ws://localhost:3000/agent" `
-  -DeviceId "studio-01" `
-  -DeviceToken "change-studio-01-token"
+.\scripts\windows\install-agent.ps1
 ```
+
+Quando o instalador perguntar a URL WebSocket da API, use `ws://localhost:3000/agent`.
 
 ## O Que o Instalador Faz
 
@@ -55,6 +64,7 @@ Para validar sem permitir desligamento da maquina, instale com `-ShutdownDryRun 
 - Executa `npm install`.
 - Instala o Chromium do Playwright.
 - Compila `@radio-bot/shared` e `@radio-bot/agent`.
+- Valida a conexao WebSocket com a API antes de registrar a tarefa.
 - Cria uma Tarefa Agendada no logon do usuario atual.
 - Inicia o agente imediatamente.
 
@@ -77,7 +87,7 @@ Get-Content C:\RadioBOT\logs\agent.log -Tail 80 -Wait
 Esperado no log:
 
 ```text
-[agent] conectado como studio-01
+[agent] conectado como <device-id>
 ```
 
 No painel, o computador deve aparecer como online em ate alguns segundos.
@@ -106,4 +116,4 @@ Para remover tambem os arquivos:
 
 ## Reinstalacao ou Troca de Token
 
-Execute o instalador novamente com os novos parametros. Ele substitui a tarefa agendada e recria o `.env`.
+Execute o instalador novamente e informe os novos dados no prompt. Ele substitui a tarefa agendada e recria o `.env`.

@@ -92,7 +92,7 @@ const commandButtons: CommandButton[] = [
   {
     key: "open",
     icon: Globe2,
-    label: "Abrir",
+    label: "Abrir e tocar",
     resolveAction: (profile) => (profile?.hasCredentials ? "login" : "open_site")
   },
   { key: "reload", icon: RefreshCw, resolveAction: () => "reload" },
@@ -123,9 +123,6 @@ type PendingSitePrompt = {
 };
 
 type ProfileMode = "direct" | "login";
-
-const palmeirinhaUrl =
-  "https://app.radios.srv.br/?r=28357A55656E59517E735956676158546B73515E6370598DACD1EA";
 
 function storedToken(): string | null {
   return window.localStorage.getItem("radio-bot-token");
@@ -1202,7 +1199,7 @@ function AdminForms({
 }) {
   const [profileName, setProfileName] = useState("");
   const [profileMode, setProfileMode] = useState<ProfileMode>("direct");
-  const [siteUrl, setSiteUrl] = useState(palmeirinhaUrl);
+  const [siteUrl, setSiteUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [deviceName, setDeviceName] = useState("");
@@ -1212,14 +1209,6 @@ function AdminForms({
     deviceId: string;
     token: string;
   } | null>(null);
-
-  function fillPalmeirinhaPreset() {
-    setProfileName("Palmeirinha FM");
-    setProfileMode("direct");
-    setSiteUrl(palmeirinhaUrl);
-    setUsername("");
-    setPassword("");
-  }
 
   async function submitProfile(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1280,10 +1269,6 @@ function AdminForms({
         <div className="admin-modal-grid">
           <form className="mini-form" onSubmit={submitProfile}>
             <strong>Radio</strong>
-            <button className="small-action" type="button" onClick={fillPalmeirinhaPreset}>
-              <Radio aria-hidden="true" />
-              Palmeirinha FM
-            </button>
             <div className="segmented-control" role="radiogroup" aria-label="Tipo de acesso">
               <button
                 type="button"
