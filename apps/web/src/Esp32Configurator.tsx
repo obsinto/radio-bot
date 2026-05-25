@@ -41,12 +41,6 @@ class SerialJsonClient {
     await port.open({
       baudRate: 115200
     });
-    await port
-      .setSignals?.({
-        dataTerminalReady: false,
-        requestToSend: false
-      })
-      .catch(() => undefined);
 
     if (!port.readable || !port.writable) {
       throw new Error("Porta serial sem fluxo de leitura ou escrita.");
@@ -62,6 +56,7 @@ class SerialJsonClient {
       throw new Error("ESP32 nao conectado via USB.");
     }
 
+    this.buffer = "";
     const pending = new Promise<SerialMessage>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.removeWaiter(expectedType, resolve);
@@ -137,7 +132,7 @@ class SerialJsonClient {
   private handleLine(line: string): void {
     let message: SerialMessage;
     try {
-      message = JSON.parse(line) as SerialMessage;
+      message = this.parseLine(line);
     } catch {
       this.onMessage({
         type: "serial_parse_error",
@@ -156,6 +151,23 @@ class SerialJsonClient {
     const waiter = this.waiters.splice(waiterIndex, 1)[0];
     window.clearTimeout(waiter.timer);
     waiter.resolve(message);
+  }
+
+  private parseLine(line: string): SerialMessage {
+    try {
+      return JSON.parse(line) as SerialMessage;
+    } catch {
+      const jsonStartIndex = line.indexOf('{"type":');
+      if (jsonStartIndex >= 0) {
+        return JSON.parse(line.slice(jsonStartIndex)) as SerialMessage;
+      }
+
+      if (line.startsWith('"type":')) {
+        return JSON.parse(`{${line}`) as SerialMessage;
+      }
+
+      throw new Error("Linha serial nao contem JSON.");
+    }
   }
 
   private removeWaiter(expectedType: string, resolve: (message: SerialMessage) => void): void {
@@ -355,8 +367,8 @@ export function Esp32Configurator({
       clientRef.current = client;
       setSerialConnected(true);
       setActiveStep("USB");
-      pushMessage("Porta serial aberta; aguardando reset automatico do ESP32.");
-      await sleep(2500);
+      pushMessage("Porta serial aberta; testando comunicacao com o ESP32.");
+      await sleep(700);
       try {
         await sendHelloWithRetries();
         onNotice("ESP32 conectado via USB.", "success");
@@ -494,7 +506,9 @@ export function Esp32Configurator({
       }
 
       setActiveStep("Gravar");
+      pushMessage("Validando URL da API.");
       const validatedApiUrl = await validateApiBaseUrl();
+      pushMessage("Enviando configuracao para o ESP32.");
       const response = await client.send(
         {
           type: "configure",
