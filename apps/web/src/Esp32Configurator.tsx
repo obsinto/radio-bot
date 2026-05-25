@@ -143,6 +143,11 @@ class SerialJsonClient {
 
     this.onMessage(message);
     const type = typeof message.type === "string" ? message.type : "";
+    if (type === "error" && message.ok === false) {
+      this.rejectOldestWaiter(serialMessageError(message));
+      return;
+    }
+
     const waiterIndex = this.waiters.findIndex((waiter) => waiter.expectedType === type);
     if (waiterIndex < 0) {
       return;
@@ -186,6 +191,16 @@ class SerialJsonClient {
       waiter.reject(error);
     }
   }
+
+  private rejectOldestWaiter(error: Error): void {
+    const waiter = this.waiters.shift();
+    if (!waiter) {
+      return;
+    }
+
+    window.clearTimeout(waiter.timer);
+    waiter.reject(error);
+  }
 }
 
 type GatewayCredentials = {
@@ -217,6 +232,12 @@ function normalizeUrl(value: string): string {
 
 function messageOk(message: SerialMessage): boolean {
   return message.ok === true;
+}
+
+function serialMessageError(message: SerialMessage): Error {
+  const code = typeof message.code === "string" ? message.code : "SERIAL_ERROR";
+  const text = typeof message.message === "string" ? message.message : "ESP32 retornou erro serial.";
+  return new Error(`${code}: ${text}`);
 }
 
 function apiErrorMessage(error: unknown, fallback: string): string {
@@ -275,11 +296,17 @@ export function Esp32Configurator({
   function pushSerialMessage(message: SerialMessage) {
     const type = typeof message.type === "string" ? message.type : "serial";
     if (type === "serial_parse_error" && typeof message.raw === "string") {
-      pushMessage(message.raw.slice(0, 120));
+      pushMessage(`serial: ${message.raw.slice(0, 120)}`);
       return;
     }
     if (type === "serial_error" && typeof message.message === "string") {
       pushMessage(`serial_error: ${message.message}`);
+      return;
+    }
+    if (message.ok === false) {
+      const code = typeof message.code === "string" ? message.code : type;
+      const text = typeof message.message === "string" ? message.message : "erro serial";
+      pushMessage(`${code}: ${text}`);
       return;
     }
     pushMessage(type);
@@ -365,6 +392,8 @@ export function Esp32Configurator({
       const client = new SerialJsonClient(pushSerialMessage);
       await client.open(port);
       clientRef.current = client;
+      setHello(null);
+      setStatus(null);
       setSerialConnected(true);
       setActiveStep("USB");
       pushMessage("Porta serial aberta; testando comunicacao com o ESP32.");
@@ -496,7 +525,6 @@ export function Esp32Configurator({
   async function configureEsp32() {
     setBusy("configure");
     try {
-      const gatewayCredentials = await ensureGatewayCredentials();
       const client = clientRef.current;
       if (!client) {
         throw new Error("Conecte o ESP32 via USB antes de gravar.");
@@ -506,8 +534,13 @@ export function Esp32Configurator({
       }
 
       setActiveStep("Gravar");
+      if (!hello) {
+        pushMessage("Validando firmware antes de gravar.");
+        await sendHelloWithRetries();
+      }
       pushMessage("Validando URL da API.");
       const validatedApiUrl = await validateApiBaseUrl();
+      const gatewayCredentials = await ensureGatewayCredentials();
       pushMessage("Enviando configuracao para o ESP32.");
       const response = await client.send(
         {
