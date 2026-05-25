@@ -260,6 +260,19 @@ export function Esp32Configurator({
     setMessages((current) => [message, ...current].slice(0, 6));
   }
 
+  function pushSerialMessage(message: SerialMessage) {
+    const type = typeof message.type === "string" ? message.type : "serial";
+    if (type === "serial_parse_error" && typeof message.raw === "string") {
+      pushMessage(message.raw.slice(0, 120));
+      return;
+    }
+    if (type === "serial_error" && typeof message.message === "string") {
+      pushMessage(`serial_error: ${message.message}`);
+      return;
+    }
+    pushMessage(type);
+  }
+
   async function ensureGatewayCredentials(): Promise<GatewayCredentials> {
     if (credentials) {
       return credentials;
@@ -334,20 +347,23 @@ export function Esp32Configurator({
     }
 
     setBusy("serial");
+    setMessages([]);
     try {
       const port = await navigator.serial.requestPort();
-      const client = new SerialJsonClient((message) => {
-        const type = typeof message.type === "string" ? message.type : "serial";
-        pushMessage(type);
-      });
+      const client = new SerialJsonClient(pushSerialMessage);
       await client.open(port);
       clientRef.current = client;
       setSerialConnected(true);
       setActiveStep("USB");
       pushMessage("Porta serial aberta; aguardando reset automatico do ESP32.");
       await sleep(2500);
-      await sendHelloWithRetries();
-      onNotice("ESP32 conectado via USB.", "success");
+      try {
+        await sendHelloWithRetries();
+        onNotice("ESP32 conectado via USB.", "success");
+      } catch (error) {
+        pushMessage(apiErrorMessage(error, "ESP32 nao respondeu hello."));
+        onNotice("Porta serial aberta, mas o ESP32 nao respondeu hello. Tente Testar status ou grave a configuracao.");
+      }
     } catch (error) {
       await clientRef.current?.close();
       clientRef.current = null;
@@ -380,6 +396,7 @@ export function Esp32Configurator({
     let lastError: unknown;
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       try {
+        pushMessage(`Enviando hello ${attempt}/5`);
         const response = await client.send({ type: "hello" }, "hello_result", 2500);
         if (!messageOk(response)) {
           throw new Error(String(response.message ?? "ESP32 recusou hello."));
