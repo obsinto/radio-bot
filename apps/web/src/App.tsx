@@ -136,6 +136,23 @@ function displayErrorMessage(error: unknown, fallback: string): string {
   return message ?? fallback;
 }
 
+function formatBackendTime(value?: string): string {
+  if (!value) {
+    return "--:--:--";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "--:--:--";
+  }
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(date);
+}
+
 export function App() {
   const [token, setToken] = useState<string | null>(() => storedToken());
   const [email, setEmail] = useState("admin@radio.local");
@@ -395,6 +412,14 @@ export function App() {
           <span>Radio BOT</span>
         </div>
         <div className="topbar-actions">
+          <time
+            className="backend-clock"
+            dateTime={dashboard?.serverTime}
+            title={dashboard?.serverTime ? `Horario do backend: ${dashboard.serverTime}` : "Horario do backend indisponivel"}
+          >
+            <span>Backend</span>
+            <strong>{formatBackendTime(dashboard?.serverTime)}</strong>
+          </time>
           <button
             className="icon-button"
             type="button"

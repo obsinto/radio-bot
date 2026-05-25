@@ -676,7 +676,10 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
 
   server.get("/api/state", async () => ({
     ok: true,
-    data: await store.getDashboardState()
+    data: {
+      ...(await store.getDashboardState()),
+      serverTime: new Date().toISOString()
+    }
   }));
 
   server.get("/api/schedules", async () => ({

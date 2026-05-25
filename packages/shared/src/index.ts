@@ -143,6 +143,7 @@ export type CommandRequest = {
 };
 
 export type DashboardState = {
+  serverTime?: string;
   profiles: SafeSiteProfile[];
   devices: SafeDevice[];
   wolGateways: SafeWolGateway[];
