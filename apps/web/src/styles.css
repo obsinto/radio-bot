@@ -613,6 +613,23 @@ h1 {
   white-space: nowrap;
 }
 
+.system-tools {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: #f8faf6;
+  border: 1px solid var(--line);
+}
+
+.system-tools strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
 .inline-alert {
   display: flex;
   align-items: center;
@@ -783,6 +800,15 @@ h1 {
   border-color: var(--line);
 }
 
+.autostart-modal {
+  width: min(860px, calc(100vw - 36px));
+  max-height: min(86vh, 760px);
+  display: grid;
+  gap: 14px;
+  overflow: auto;
+  border-color: var(--line);
+}
+
 .modal-head {
   display: flex;
   align-items: start;
@@ -793,6 +819,124 @@ h1 {
 
 .modal-close {
   flex: 0 0 auto;
+}
+
+.autostart-target {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  background: #f8faf6;
+  border: 1px solid var(--line);
+}
+
+.autostart-target span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 850;
+}
+
+.autostart-search,
+.autostart-manual {
+  display: grid;
+  gap: 10px;
+  align-items: end;
+}
+
+.autostart-search {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.autostart-manual {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-top: 4px;
+}
+
+.autostart-search label,
+.autostart-manual label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.autostart-search label > span {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.autostart-search svg,
+.autostart-manual svg,
+.app-result-row svg {
+  width: 17px;
+  height: 17px;
+}
+
+.autostart-search input,
+.autostart-manual input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  background: #f8faf6;
+  color: var(--ink);
+  padding: 0 11px;
+  outline: none;
+}
+
+.autostart-search input:focus,
+.autostart-manual input:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(17, 120, 94, 0.12);
+}
+
+.autostart-result {
+  margin-top: 0;
+}
+
+.app-results {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.app-result-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.app-result-row div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.app-result-row strong,
+.app-result-row span,
+.app-result-row em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-result-row span,
+.app-result-row em {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.app-result-row em {
+  font-style: normal;
+  font-weight: 850;
 }
 
 .admin-modal-grid {
@@ -1621,9 +1765,16 @@ h1 {
 
   .form-heading,
   .wol-row header,
+  .system-tools,
   .modal-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .autostart-search,
+  .autostart-manual,
+  .app-result-row {
+    grid-template-columns: 1fr;
   }
 
   .form-submit,

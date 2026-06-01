@@ -91,7 +91,7 @@ export async function updateAdminCredentials(input: {
 export async function sendCommand(input: {
   token: string;
   deviceId: string;
-  profileId: string;
+  profileId?: string | null;
   action: CommandAction;
   payload?: CommandPayload;
   confirmations?: number;

@@ -6,6 +6,7 @@ import {
   Camera,
   CheckCircle2,
   CircleDot,
+  FolderOpen,
   Globe2,
   LogIn,
   Monitor,
@@ -18,6 +19,7 @@ import {
   Radio,
   RefreshCw,
   Save,
+  Search,
   Settings,
   ShieldAlert,
   Square,
@@ -30,8 +32,10 @@ import {
 import type {
   ApiError,
   CommandAction,
+  CommandRecord,
   ConfirmationPrompt,
   DashboardState,
+  ExecutableCandidate,
   ProfileConflict,
   SafeDevice,
   SafeSiteProfile,
@@ -67,7 +71,9 @@ const actionLabels: Record<CommandAction, string> = {
   play_radio: "Play",
   stop_playback: "Stop",
   shutdown: "Desligar",
-  power_on: "Ligar computador"
+  power_on: "Ligar computador",
+  discover_executables: "Buscar aplicativos",
+  configure_autostart_app: "Inicializar app"
 };
 
 function actionLabel(action: CommandAction): string {
@@ -170,6 +176,7 @@ export function App() {
   const [shutdownConfirmOpen, setShutdownConfirmOpen] = useState(false);
   const [dismissedPromptIds, setDismissedPromptIds] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [autostartOpen, setAutostartOpen] = useState(false);
   const [expandedScreenshot, setExpandedScreenshot] = useState<string | null>(null);
 
   const selectedDevice = useMemo(
@@ -211,6 +218,7 @@ export function App() {
           const sitePrompt = command.output?.sitePrompt as SitePrompt | undefined;
           return (
             command.status === "waiting_confirmation" &&
+            typeof command.profileId === "string" &&
             sitePrompt?.type === "open_here" &&
             !dismissedPromptIds.includes(command.id)
           );
@@ -219,7 +227,7 @@ export function App() {
           setPendingSitePrompt({
             commandId: promptCommand.id,
             deviceId: promptCommand.deviceId,
-            profileId: promptCommand.profileId,
+            profileId: promptCommand.profileId ?? "",
             prompt: promptCommand.output?.sitePrompt as SitePrompt
           });
         }
@@ -515,6 +523,22 @@ export function App() {
             })}
           </div>
 
+          <section className="system-tools">
+            <div>
+              <p className="eyebrow">Windows</p>
+              <strong>Inicializacao de aplicativo</strong>
+            </div>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={!selectedDevice || selectedDevice.status !== "online"}
+              onClick={() => setAutostartOpen(true)}
+            >
+              <FolderOpen aria-hidden="true" />
+              Aplicativos
+            </button>
+          </section>
+
           {message ? (
             <div className={`inline-alert tone-${message.tone}`}>
               {message.tone === "success" ? (
@@ -590,6 +614,16 @@ export function App() {
               force: false
             });
           }}
+        />
+      ) : null}
+
+      {autostartOpen ? (
+        <AutostartModal
+          token={token}
+          device={selectedDevice}
+          onClose={() => setAutostartOpen(false)}
+          onDashboard={setDashboard}
+          onNotice={setMessage}
         />
       ) : null}
 
@@ -1672,6 +1706,316 @@ function ShutdownModal({
       </section>
     </div>
   );
+}
+
+function AutostartModal({
+  token,
+  device,
+  onClose,
+  onDashboard,
+  onNotice
+}: {
+  token: string;
+  device: SafeDevice | null;
+  onClose: () => void;
+  onDashboard: (dashboard: DashboardState) => void;
+  onNotice: (message: string | null, tone?: "error" | "success") => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [manualPath, setManualPath] = useState("");
+  const [candidates, setCandidates] = useState<ExecutableCandidate[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [lastConfigured, setLastConfigured] = useState<string | null>(null);
+
+  const online = device?.status === "online";
+
+  async function runAgentCommand(
+    action: "discover_executables" | "configure_autostart_app",
+    payload: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<CommandRecord> {
+    if (!device) {
+      throw new Error("Selecione um computador.");
+    }
+    if (device.status !== "online") {
+      throw new Error("O agente precisa estar online.");
+    }
+
+    const command = await sendCommand({
+      token,
+      deviceId: device.id,
+      action,
+      payload
+    });
+    const result = await waitForCommandResult(token, command.id, timeoutMs);
+    onDashboard(result.dashboard);
+    if (result.command.status === "failed") {
+      throw new Error(result.command.error ?? "Comando do agente falhou.");
+    }
+    return result.command;
+  }
+
+  async function searchExecutables() {
+    setBusy("search");
+    setLastConfigured(null);
+    onNotice(null);
+    try {
+      const command = await runAgentCommand(
+        "discover_executables",
+        {
+          query: query.trim(),
+          limit: 80
+        },
+        65000
+      );
+      const nextCandidates = readExecutableCandidates(command.output?.candidates);
+      setCandidates(nextCandidates);
+      onNotice(`${nextCandidates.length} aplicativo(s) encontrado(s).`, "success");
+    } catch (error) {
+      onNotice(displayErrorMessage(error, "Nao foi possivel buscar aplicativos."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function configureAutostart(app: {
+    name?: string;
+    path: string;
+    workingDir?: string;
+  }) {
+    setBusy(app.path);
+    setLastConfigured(null);
+    onNotice(null);
+    try {
+      const command = await runAgentCommand(
+        "configure_autostart_app",
+        {
+          name: app.name,
+          path: app.path,
+          workingDir: app.workingDir
+        },
+        35000
+      );
+      const taskName = outputString(command.output, "taskName") ?? "RadioBOT Autostart";
+      setLastConfigured(taskName);
+      onNotice(`Inicializacao configurada: ${taskName}.`, "success");
+    } catch (error) {
+      onNotice(displayErrorMessage(error, "Nao foi possivel configurar a inicializacao."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section
+        className="modal autostart-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="autostart-title"
+      >
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Windows</p>
+            <h2 id="autostart-title">Inicializacao de aplicativo</h2>
+          </div>
+          <button className="icon-button modal-close" type="button" onClick={onClose} title="Fechar">
+            <X aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="autostart-target">
+          <StatusPill device={device} />
+          <span>{device?.name ?? "Nenhum computador selecionado"}</span>
+        </div>
+
+        <form
+          className="autostart-search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void searchExecutables();
+          }}
+        >
+          <label>
+            Buscar aplicativo
+            <span>
+              <Search aria-hidden="true" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Nome do programa"
+                disabled={!online || busy !== null}
+              />
+            </span>
+          </label>
+          <button className="small-action" type="submit" disabled={!online || busy !== null}>
+            <Search aria-hidden="true" />
+            {busy === "search" ? "Buscando" : "Buscar"}
+          </button>
+        </form>
+
+        <form
+          className="autostart-manual"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const path = manualPath.trim();
+            if (path) {
+              void configureAutostart({ path });
+            }
+          }}
+        >
+          <label>
+            Caminho manual do .exe
+            <input
+              value={manualPath}
+              onChange={(event) => setManualPath(event.target.value)}
+              placeholder="C:\\Program Files\\Sistema\\Sistema.exe"
+              disabled={!online || busy !== null}
+            />
+          </label>
+          <button
+            className="ghost-button"
+            type="submit"
+            disabled={!online || busy !== null || manualPath.trim().length === 0}
+          >
+            <Save aria-hidden="true" />
+            Configurar
+          </button>
+        </form>
+
+        {lastConfigured ? (
+          <div className="inline-alert tone-success autostart-result">
+            <CheckCircle2 aria-hidden="true" />
+            <span>{lastConfigured}</span>
+          </div>
+        ) : null}
+
+        <div className="app-results">
+          <div className="list-heading">
+            Aplicativos encontrados
+            <span>{candidates.length}</span>
+          </div>
+          {candidates.length === 0 ? (
+            <p className="empty-state">
+              {online ? "Nenhum aplicativo listado ainda." : "Agente offline."}
+            </p>
+          ) : (
+            candidates.map((app) => (
+              <article className="app-result-row" key={app.id}>
+                <div>
+                  <strong>{app.name}</strong>
+                  <span>{app.path}</span>
+                  <em>{sourceLabel(app.source)}</em>
+                </div>
+                <button
+                  className="small-action"
+                  type="button"
+                  disabled={!online || busy !== null}
+                  onClick={() => void configureAutostart(app)}
+                >
+                  <Save aria-hidden="true" />
+                  {busy === app.path ? "Configurando" : "Usar"}
+                </button>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+async function waitForCommandResult(
+  token: string,
+  commandId: string,
+  timeoutMs: number
+): Promise<{ command: CommandRecord; dashboard: DashboardState }> {
+  const deadline = Date.now() + timeoutMs;
+  let lastDashboard: DashboardState | null = null;
+
+  while (Date.now() < deadline) {
+    const dashboard = await getState(token);
+    lastDashboard = dashboard;
+    const command = dashboard.commands.find((item) => item.id === commandId);
+    if (
+      command &&
+      (command.status === "succeeded" ||
+        command.status === "failed" ||
+        command.status === "waiting_confirmation")
+    ) {
+      return {
+        command,
+        dashboard
+      };
+    }
+    await delay(1000);
+  }
+
+  if (lastDashboard) {
+    const command = lastDashboard.commands.find((item) => item.id === commandId);
+    if (command) {
+      return {
+        command,
+        dashboard: lastDashboard
+      };
+    }
+  }
+
+  throw new Error("Tempo limite aguardando resposta do agente.");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function readExecutableCandidates(value: unknown): ExecutableCandidate[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+    const candidate = item as Partial<ExecutableCandidate>;
+    if (
+      typeof candidate.id !== "string" ||
+      typeof candidate.name !== "string" ||
+      typeof candidate.path !== "string" ||
+      typeof candidate.workingDir !== "string" ||
+      (candidate.source !== "start_menu" &&
+        candidate.source !== "registry" &&
+        candidate.source !== "common_path")
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: candidate.id,
+        name: candidate.name,
+        path: candidate.path,
+        workingDir: candidate.workingDir,
+        source: candidate.source,
+        publisher: typeof candidate.publisher === "string" ? candidate.publisher : null,
+        version: typeof candidate.version === "string" ? candidate.version : null
+      }
+    ];
+  });
+}
+
+function outputString(output: Record<string, unknown> | null, key: string): string | null {
+  const value = output?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function sourceLabel(source: ExecutableCandidate["source"]): string {
+  if (source === "start_menu") {
+    return "Menu Iniciar";
+  }
+  if (source === "registry") {
+    return "Registro";
+  }
+  return "Pastas comuns";
 }
 
 function ConflictModal({

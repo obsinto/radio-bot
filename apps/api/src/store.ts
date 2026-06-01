@@ -550,7 +550,7 @@ export class AppStore {
 
   createCommand(input: {
     action: CommandAction;
-    profileId: string;
+    profileId: string | null;
     deviceId: string;
     requestedBy: string;
     payload?: CommandPayload;
@@ -578,6 +578,27 @@ export class AppStore {
     this.patchCommand(commandId, { status: "sent" });
   }
 
+  reserveAgentCommand(deviceId: string): CommandRecord | null {
+    const commands = [...this.commands.values()].sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt)
+    );
+
+    for (const command of commands) {
+      if (
+        command.deviceId !== deviceId ||
+        command.status !== "queued" ||
+        command.action === "power_on"
+      ) {
+        continue;
+      }
+
+      this.markCommandSent(command.id);
+      return command;
+    }
+
+    return null;
+  }
+
   completeCommand(
     commandId: string,
     result: {
@@ -593,6 +614,25 @@ export class AppStore {
       error: result.error ?? null,
       screenshot: result.screenshot ?? null
     });
+  }
+
+  completeAgentCommand(
+    deviceId: string,
+    commandId: string,
+    result: {
+      status: "succeeded" | "failed" | "waiting_confirmation";
+      output?: Record<string, unknown>;
+      error?: string;
+      screenshot?: string;
+    }
+  ): boolean {
+    const command = this.commands.get(commandId);
+    if (!command || command.deviceId !== deviceId || command.action === "power_on") {
+      return false;
+    }
+
+    this.completeCommand(commandId, result);
+    return true;
   }
 
   updateDeviceWol(

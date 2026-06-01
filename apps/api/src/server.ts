@@ -3,10 +3,12 @@ import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { WebSocket } from "ws";
 import {
+  type AgentBrowserState,
   type AgentToServerMessage,
   type ApiError,
   type CommandAction,
   type CommandRequest,
+  type LegacyAgentPollResult,
   type ScheduleInput,
   type ScheduleKind,
   type ScheduleRecord,
@@ -68,7 +70,12 @@ function isCommandBody(body: unknown): body is CommandRequest {
   }
 
   const candidate = body as Partial<CommandRequest>;
-  return isCommandAction(candidate.action) && typeof candidate.profileId === "string";
+  return (
+    isCommandAction(candidate.action) &&
+    (candidate.profileId === undefined ||
+      candidate.profileId === null ||
+      typeof candidate.profileId === "string")
+  );
 }
 
 const profileConflictActions = new Set<CommandAction>([
@@ -79,6 +86,17 @@ const profileConflictActions = new Set<CommandAction>([
   "confirm_open_here",
   "play_radio"
 ]);
+
+const profileOptionalActions = new Set<CommandAction>([
+  "get_state",
+  "shutdown",
+  "discover_executables",
+  "configure_autostart_app"
+]);
+
+function commandRequiresProfile(action: CommandAction): boolean {
+  return !profileOptionalActions.has(action);
+}
 
 function isCreateProfileBody(body: unknown): body is {
   id?: string;
@@ -263,6 +281,75 @@ function isWolGatewayResultBody(body: unknown): body is {
   );
 }
 
+function isAgentState(value: unknown): value is Partial<AgentBrowserState> {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    (candidate.currentProfileId === undefined ||
+      candidate.currentProfileId === null ||
+      typeof candidate.currentProfileId === "string") &&
+    (candidate.activeUrl === undefined ||
+      candidate.activeUrl === null ||
+      typeof candidate.activeUrl === "string") &&
+    (candidate.title === undefined ||
+      candidate.title === null ||
+      typeof candidate.title === "string")
+  );
+}
+
+function isLegacyAgentPollBody(body: unknown): body is {
+  state?: Partial<AgentBrowserState>;
+} {
+  if (body === undefined || body === null) {
+    return true;
+  }
+  if (typeof body !== "object") {
+    return false;
+  }
+  const candidate = body as Record<string, unknown>;
+  return candidate.state === undefined || isAgentState(candidate.state);
+}
+
+function isLegacyAgentResultBody(body: unknown): body is {
+  status: "succeeded" | "failed" | "waiting_confirmation";
+  output?: Record<string, unknown>;
+  error?: string;
+  screenshot?: string;
+  state?: Partial<AgentBrowserState>;
+} {
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+  const candidate = body as Record<string, unknown>;
+  return (
+    (candidate.status === "succeeded" ||
+      candidate.status === "failed" ||
+      candidate.status === "waiting_confirmation") &&
+    (candidate.output === undefined ||
+      (typeof candidate.output === "object" && candidate.output !== null)) &&
+    (candidate.error === undefined || typeof candidate.error === "string") &&
+    (candidate.screenshot === undefined || typeof candidate.screenshot === "string") &&
+    (candidate.state === undefined || isAgentState(candidate.state))
+  );
+}
+
+function getDeviceCredentials(request: FastifyRequest): {
+  deviceId: string;
+  token: string;
+} | null {
+  const query = request.query as { deviceId?: string; token?: string };
+  const bearerToken = getBearerToken(request);
+  if (!query.deviceId || (!query.token && !bearerToken)) {
+    return null;
+  }
+  return {
+    deviceId: query.deviceId,
+    token: bearerToken ?? query.token ?? ""
+  };
+}
+
 function getGatewayCredentials(request: FastifyRequest): {
   gatewayId: string;
   token: string;
@@ -283,8 +370,10 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     ? await PostgresStore.create(config)
     : new AppStore(config);
   const agents = new Map<string, AgentConnection>();
+  const legacyAgents = new Map<string, number>();
   const commandWaiters = new Map<string, (completion: CommandCompletion) => void>();
   const runningScheduleIds = new Set<string>();
+  const LEGACY_AGENT_FRESH_MS = 30000;
   const server = Fastify({
     logger: true
   });
@@ -322,11 +411,56 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     });
   }
 
+  function isLegacyAgentFresh(deviceId: string): boolean {
+    const lastSeen = legacyAgents.get(deviceId);
+    return Boolean(lastSeen && Date.now() - lastSeen <= LEGACY_AGENT_FRESH_MS);
+  }
+
+  function isDeviceConnected(deviceId: string): boolean {
+    return agents.has(deviceId) || isLegacyAgentFresh(deviceId);
+  }
+
+  async function sendOrQueueAgentCommand(input: {
+    command: Awaited<ReturnType<typeof store.createCommand>>;
+    profile: Awaited<ReturnType<typeof store.getProfile>>;
+  }): Promise<void> {
+    const agent = agents.get(input.command.deviceId);
+    if (!agent) {
+      return;
+    }
+
+    sendAgentMessage(agent.socket, {
+      type: "command",
+      command: {
+        id: input.command.id,
+        action: input.command.action,
+        profileId: input.command.profileId,
+        payload: input.command.payload
+      },
+      profile: input.profile
+    });
+    await store.markCommandSent(input.command.id);
+  }
+
+  const legacyAgentSweep = setInterval(() => {
+    const staleDeviceIds = [...legacyAgents.entries()]
+      .filter(([, lastSeen]) => Date.now() - lastSeen > LEGACY_AGENT_FRESH_MS)
+      .map(([deviceId]) => deviceId);
+
+    for (const deviceId of staleDeviceIds) {
+      legacyAgents.delete(deviceId);
+      void store.markDeviceOffline(deviceId);
+    }
+  }, 10000);
+  server.addHook("onClose", async () => {
+    clearInterval(legacyAgentSweep);
+  });
+
   async function waitForDeviceOnline(deviceId: string, timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const device = await store.getDevice(deviceId);
-      if (device?.status === "online" && agents.has(deviceId)) {
+      if (device?.status === "online" && isDeviceConnected(deviceId)) {
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -342,36 +476,28 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     payload?: Record<string, unknown>;
     timeoutMs?: number;
   }): Promise<string> {
-    if (!input.profile) {
+    if (commandRequiresProfile(input.action) && !input.profile) {
       throw new Error("Perfil de acesso nao encontrado para executar o comando.");
     }
 
     const device = await store.getDevice(input.deviceId);
-    const agent = agents.get(input.deviceId);
-    if (!device || !agent || device.status !== "online") {
+    if (!device || device.status !== "online" || !isDeviceConnected(input.deviceId)) {
       throw new Error("Computador offline ou agente desconectado.");
     }
 
     const command = await store.createCommand({
       action: input.action,
-      profileId: input.profile.id,
+      profileId: input.profile?.id ?? null,
       deviceId: input.deviceId,
       requestedBy: input.requestedBy,
       payload: input.payload
     });
     const completionPromise = waitForCommandCompletion(command.id, input.timeoutMs ?? 60000);
 
-    sendAgentMessage(agent.socket, {
-      type: "command",
-      command: {
-        id: command.id,
-        action: command.action,
-        profileId: command.profileId,
-        payload: command.payload
-      },
+    await sendOrQueueAgentCommand({
+      command,
       profile: input.profile
     });
-    await store.markCommandSent(command.id);
 
     const completion = await completionPromise;
     if (completion.status !== "succeeded") {
@@ -1170,6 +1296,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
       agents.delete(deviceId);
       agent.socket.close(1000, "device deleted");
     }
+    legacyAgents.delete(deviceId);
 
     return reply.send({
       ok: true,
@@ -1233,9 +1360,17 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
       });
     }
 
-    const profile = await store.getProfile(body.profileId);
-    const validationError = await store.assertDeviceCanUseProfile(deviceId, body.profileId);
-    if (validationError || !profile) {
+    const profileId =
+      typeof body.profileId === "string" && body.profileId.trim()
+        ? body.profileId.trim()
+        : null;
+    const profile = profileId ? await store.getProfile(profileId) : null;
+    const validationError = profileId
+      ? await store.assertDeviceCanUseProfile(deviceId, profileId)
+      : commandRequiresProfile(body.action)
+        ? "Perfil de acesso obrigatorio para este comando."
+        : null;
+    if (validationError || (profileId && !profile)) {
       return apiError(reply, 422, {
         ok: false,
         code: "PROFILE_NOT_ALLOWED",
@@ -1244,6 +1379,14 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     }
 
     if (body.action === "power_on") {
+      if (!profileId) {
+        return apiError(reply, 422, {
+          ok: false,
+          code: "PROFILE_REQUIRED",
+          message: "Escolha uma radio antes de ligar o computador por Wake on LAN."
+        });
+      }
+
       if (!device.macAddress) {
         return apiError(reply, 422, {
           ok: false,
@@ -1271,7 +1414,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
 
       const command = await store.createCommand({
         action: body.action,
-        profileId: body.profileId,
+        profileId,
         deviceId,
         requestedBy: request.userEmail ?? "unknown",
         payload: body.payload
@@ -1283,10 +1426,10 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     }
 
     const confirmations = Number(body.confirmations ?? 0);
-    const activeDevices = profileConflictActions.has(body.action)
-      ? await store.listDevicesUsingProfile(body.profileId, deviceId)
+    const activeDevices = profileId && profileConflictActions.has(body.action)
+      ? await store.listDevicesUsingProfile(profileId, deviceId)
       : [];
-    if (activeDevices.length > 0 && confirmations < 2) {
+    if (profileId && activeDevices.length > 0 && confirmations < 2) {
       return apiError(reply, 409, {
         ok: false,
         code: "PROFILE_ACTIVE_ELSEWHERE",
@@ -1299,15 +1442,14 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
           requiredConfirmations: 2
         },
         conflict: {
-          profileId: body.profileId,
+          profileId,
           activeDevices,
           requiredConfirmations: 2
         }
       });
     }
 
-    const agent = agents.get(deviceId);
-    if (!agent || device.status !== "online") {
+    if (device.status !== "online" || !isDeviceConnected(deviceId)) {
       return apiError(reply, 409, {
         ok: false,
         code: "DEVICE_OFFLINE",
@@ -1321,27 +1463,127 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
 
     const command = await store.createCommand({
       action: body.action,
-      profileId: body.profileId,
+      profileId,
       deviceId,
       requestedBy: request.userEmail ?? "unknown",
       payload: body.payload
     });
 
-    sendAgentMessage(agent.socket, {
-      type: "command",
-      command: {
-        id: command.id,
-        action: command.action,
-        profileId: command.profileId,
-        payload: command.payload
-      },
+    await sendOrQueueAgentCommand({
+      command,
       profile
     });
-    await store.markCommandSent(command.id);
 
     return reply.send({
       ok: true,
       data: command
+    });
+  });
+
+  server.post("/agent-legacy/poll", async (request, reply) => {
+    const credentials = getDeviceCredentials(request);
+    if (
+      !credentials ||
+      !(await store.verifyDeviceToken(credentials.deviceId, credentials.token))
+    ) {
+      return apiError(reply, 401, {
+        ok: false,
+        code: "INVALID_DEVICE_CREDENTIALS",
+        message: "Credenciais do agente invalidas."
+      });
+    }
+
+    if (!isLegacyAgentPollBody(request.body)) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "INVALID_AGENT_POLL",
+        message: "Payload de polling invalido."
+      });
+    }
+
+    const deviceId = credentials.deviceId;
+    legacyAgents.set(deviceId, Date.now());
+    await store.markDeviceOnline(deviceId);
+    if (request.body?.state) {
+      await store.updateDeviceState(deviceId, request.body.state);
+    }
+
+    const command = await store.reserveAgentCommand(deviceId);
+    const profile = command?.profileId ? await store.getProfile(command.profileId) : null;
+    const data: LegacyAgentPollResult = {
+      deviceId,
+      command: command
+        ? {
+            id: command.id,
+            action: command.action,
+            profileId: command.profileId,
+            payload: command.payload
+          }
+        : null,
+      profile
+    };
+
+    return reply.send({
+      ok: true,
+      data
+    });
+  });
+
+  server.post("/agent-legacy/commands/:commandId/result", async (request, reply) => {
+    const credentials = getDeviceCredentials(request);
+    if (
+      !credentials ||
+      !(await store.verifyDeviceToken(credentials.deviceId, credentials.token))
+    ) {
+      return apiError(reply, 401, {
+        ok: false,
+        code: "INVALID_DEVICE_CREDENTIALS",
+        message: "Credenciais do agente invalidas."
+      });
+    }
+
+    if (!isLegacyAgentResultBody(request.body)) {
+      return apiError(reply, 400, {
+        ok: false,
+        code: "INVALID_AGENT_RESULT",
+        message: "Resultado do agente invalido."
+      });
+    }
+
+    const { commandId } = request.params as { commandId: string };
+    const deviceId = credentials.deviceId;
+    legacyAgents.set(deviceId, Date.now());
+    await store.markDeviceOnline(deviceId);
+    if (request.body.state) {
+      await store.updateDeviceState(deviceId, request.body.state);
+    }
+
+    const completed = await store.completeAgentCommand(deviceId, commandId, {
+      status: request.body.status,
+      output: request.body.output,
+      error: request.body.error,
+      screenshot: request.body.screenshot
+    });
+    if (completed) {
+      resolveCommandWaiter(commandId, {
+        status: request.body.status,
+        error: request.body.error
+      });
+    }
+
+    if (!completed) {
+      return apiError(reply, 404, {
+        ok: false,
+        code: "AGENT_COMMAND_NOT_FOUND",
+        message: "Comando nao encontrado para este agente."
+      });
+    }
+
+    return reply.send({
+      ok: true,
+      data: {
+        commandId
+      }
     });
   });
 

@@ -66,7 +66,7 @@ type ProfileRow = QueryResultRow & {
 type CommandRow = QueryResultRow & {
   id: string;
   action: CommandAction;
-  profile_id: string;
+  profile_id: string | null;
   device_id: string;
   requested_by: string;
   payload: CommandPayload | string;
@@ -871,7 +871,7 @@ export class PostgresStore {
 
   async createCommand(input: {
     action: CommandAction;
-    profileId: string;
+    profileId: string | null;
     deviceId: string;
     requestedBy: string;
     payload?: CommandPayload;
@@ -925,6 +925,49 @@ export class PostgresStore {
     });
   }
 
+  async reserveAgentCommand(deviceId: string): Promise<CommandRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<CommandRow>(
+        `
+          SELECT *
+          FROM commands
+          WHERE device_id = $1
+            AND status = 'queued'
+            AND action <> 'power_on'
+          ORDER BY created_at ASC
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        `,
+        [deviceId]
+      );
+
+      const row = result.rows[0];
+      if (!row) {
+        await client.query("COMMIT");
+        return null;
+      }
+
+      const update = await client.query<CommandRow>(
+        `
+          UPDATE commands
+          SET status = 'sent', updated_at = NOW()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [row.id]
+      );
+      await client.query("COMMIT");
+      return update.rows[0] ? this.commandFromRow(update.rows[0]) : null;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async completeCommand(
     commandId: string,
     result: {
@@ -940,6 +983,41 @@ export class PostgresStore {
       error: result.error ?? null,
       screenshot: result.screenshot ?? null
     });
+  }
+
+  async completeAgentCommand(
+    deviceId: string,
+    commandId: string,
+    result: {
+      status: "succeeded" | "failed" | "waiting_confirmation";
+      output?: Record<string, unknown>;
+      error?: string;
+      screenshot?: string;
+    }
+  ): Promise<boolean> {
+    const update = await this.pool.query(
+      `
+        UPDATE commands
+        SET
+          status = $3,
+          output = $4::jsonb,
+          error = $5,
+          screenshot = $6,
+          updated_at = NOW()
+        WHERE id = $1
+          AND device_id = $2
+          AND action <> 'power_on'
+      `,
+      [
+        commandId,
+        deviceId,
+        result.status,
+        result.output ? JSON.stringify(result.output) : null,
+        result.error ?? null,
+        result.screenshot ?? null
+      ]
+    );
+    return (update.rowCount ?? 0) > 0;
   }
 
   async updateDeviceWol(
@@ -1179,7 +1257,7 @@ export class PostgresStore {
       CREATE TABLE IF NOT EXISTS commands (
         id UUID PRIMARY KEY,
         action TEXT NOT NULL,
-        profile_id TEXT NOT NULL REFERENCES site_profiles(id),
+        profile_id TEXT REFERENCES site_profiles(id),
         device_id TEXT NOT NULL REFERENCES devices(id),
         requested_by TEXT NOT NULL,
         payload JSONB NOT NULL DEFAULT '{}',
@@ -1229,6 +1307,7 @@ export class PostgresStore {
       ALTER TABLE devices ADD COLUMN IF NOT EXISTS wol_gateway_id TEXT REFERENCES wol_gateways(id) ON DELETE SET NULL;
       ALTER TABLE devices ADD COLUMN IF NOT EXISTS token_cipher TEXT;
       ALTER TABLE wol_gateways ADD COLUMN IF NOT EXISTS token_cipher TEXT;
+      ALTER TABLE commands ALTER COLUMN profile_id DROP NOT NULL;
     `);
 
     await this.pool.query(

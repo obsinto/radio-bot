@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { chromium, type BrowserContext, type Frame, type Page } from "playwright";
 import type { AgentBrowserState, AgentCommand, SiteProfile, SitePrompt } from "@radio-bot/shared";
 import type { AgentConfig } from "./config.js";
+import { configureWindowsAutostart, discoverWindowsExecutables } from "./windows-apps.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -31,9 +32,39 @@ export class BrowserController {
 
   constructor(private readonly config: AgentConfig) {}
 
-  async execute(command: AgentCommand, profile: SiteProfile): Promise<CommandExecutionResult> {
+  async execute(command: AgentCommand, profile: SiteProfile | null): Promise<CommandExecutionResult> {
+    if (command.action === "discover_executables") {
+      return {
+        output: await discoverWindowsExecutables(command.payload),
+        state: await this.getState()
+      };
+    }
+
+    if (command.action === "configure_autostart_app") {
+      return {
+        output: await configureWindowsAutostart(command.payload),
+        state: await this.getState()
+      };
+    }
+
+    if (command.action === "shutdown") {
+      return {
+        output: await this.shutdownComputer(command.payload),
+        state: await this.getState()
+      };
+    }
+
+    if (command.action === "get_state") {
+      return {
+        output: await this.getState(),
+        state: await this.getState()
+      };
+    }
+
+    const activeProfile = this.requireProfile(profile);
+
     if (command.action === "open_site") {
-      await this.openSite(profile);
+      await this.openSite(activeProfile);
       const sitePrompt = await this.detectSitePrompt();
       if (sitePrompt) {
         return {
@@ -44,7 +75,7 @@ export class BrowserController {
           state: await this.getState()
         };
       }
-      const play = await this.playCurrentPage(profile);
+      const play = await this.playCurrentPage(activeProfile);
       return {
         output: {
           opened: true,
@@ -55,7 +86,7 @@ export class BrowserController {
     }
 
     if (command.action === "login") {
-      await this.login(profile);
+      await this.login(activeProfile);
       const sitePrompt = await this.detectSitePrompt();
       if (sitePrompt) {
         return {
@@ -66,7 +97,7 @@ export class BrowserController {
           state: await this.getState()
         };
       }
-      const play = await this.playCurrentPage(profile);
+      const play = await this.playCurrentPage(activeProfile);
       return {
         output: {
           loggedInAttempted: true,
@@ -77,7 +108,7 @@ export class BrowserController {
     }
 
     if (command.action === "reload") {
-      const page = await this.ensurePage(profile);
+      const page = await this.ensurePage(activeProfile);
       await page.reload({
         waitUntil: "domcontentloaded"
       });
@@ -90,7 +121,7 @@ export class BrowserController {
     }
 
     if (command.action === "screenshot") {
-      const page = await this.ensurePage(profile);
+      const page = await this.ensurePage(activeProfile);
       const image = await page.screenshot({
         type: "jpeg",
         quality: 70,
@@ -105,20 +136,13 @@ export class BrowserController {
       };
     }
 
-    if (command.action === "get_state") {
-      return {
-        output: await this.getState(),
-        state: await this.getState()
-      };
-    }
-
     if (command.action === "click_action") {
       const actionKey = command.payload.actionKey;
       if (typeof actionKey !== "string" || !this.config.actionMap[actionKey]) {
         throw new Error("Acao nao mapeada no agente local.");
       }
 
-      const page = await this.ensurePage(profile);
+      const page = await this.ensurePage(activeProfile);
       await page.locator(this.config.actionMap[actionKey]).first().click({
         timeout: 5000
       });
@@ -132,33 +156,26 @@ export class BrowserController {
 
     if (command.action === "play_radio") {
       return {
-        output: await this.playRadio(profile),
+        output: await this.playRadio(activeProfile),
         state: await this.getState()
       };
     }
 
     if (command.action === "stop_playback") {
       return {
-        output: await this.stopPlayback(profile, command.payload),
-        state: await this.getState()
-      };
-    }
-
-    if (command.action === "shutdown") {
-      return {
-        output: await this.shutdownComputer(command.payload),
+        output: await this.stopPlayback(activeProfile, command.payload),
         state: await this.getState()
       };
     }
 
     if (command.action === "confirm_open_here") {
-      const page = await this.ensurePage(profile);
+      const page = await this.ensurePage(activeProfile);
       await this.clickOpenHere(page);
       await page.waitForLoadState("domcontentloaded", {
         timeout: 15000
       }).catch(() => undefined);
       await page.waitForTimeout(1000);
-      const play = await this.playCurrentPage(profile);
+      const play = await this.playCurrentPage(activeProfile);
       return {
         output: {
           confirmedOpenHere: true,
@@ -169,6 +186,13 @@ export class BrowserController {
     }
 
     throw new Error(`Comando nao suportado: ${command.action}`);
+  }
+
+  private requireProfile(profile: SiteProfile | null): SiteProfile {
+    if (!profile) {
+      throw new Error("Perfil de acesso obrigatorio para este comando.");
+    }
+    return profile;
   }
 
   async getState(): Promise<AgentBrowserState> {

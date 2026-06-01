@@ -9,7 +9,9 @@ export const COMMAND_ACTIONS = [
   "play_radio",
   "stop_playback",
   "shutdown",
-  "power_on"
+  "power_on",
+  "discover_executables",
+  "configure_autostart_app"
 ] as const;
 
 export type CommandAction = (typeof COMMAND_ACTIONS)[number];
@@ -76,6 +78,16 @@ export type SafeDevice = Omit<Device, "token"> & {
   agentToken: string | null;
 };
 
+export type ExecutableCandidate = {
+  id: string;
+  name: string;
+  path: string;
+  workingDir: string;
+  source: "start_menu" | "registry" | "common_path";
+  publisher: string | null;
+  version: string | null;
+};
+
 export type CommandPayload = {
   actionKey?: string;
   [key: string]: unknown;
@@ -84,7 +96,7 @@ export type CommandPayload = {
 export type CommandRecord = {
   id: string;
   action: CommandAction;
-  profileId: string;
+  profileId: string | null;
   deviceId: string;
   requestedBy: string;
   payload: CommandPayload;
@@ -137,7 +149,7 @@ export type ScheduleUpdate = Partial<ScheduleInput>;
 
 export type CommandRequest = {
   action: CommandAction;
-  profileId: string;
+  profileId?: string | null;
   payload?: CommandPayload;
   confirmations?: number;
 };
@@ -164,6 +176,12 @@ export type WolGatewayCommand = {
 export type WolGatewayPollResult = {
   gatewayId: string;
   command: WolGatewayCommand | null;
+};
+
+export type LegacyAgentPollResult = {
+  deviceId: string;
+  command: AgentCommand | null;
+  profile: SiteProfile | null;
 };
 
 export type ProfileConflict = {
@@ -203,7 +221,7 @@ export type ApiOk<T> = {
 export type AgentCommand = {
   id: string;
   action: CommandAction;
-  profileId: string;
+  profileId: string | null;
   payload: CommandPayload;
 };
 
@@ -215,7 +233,7 @@ export type ServerToAgentMessage =
   | {
       type: "command";
       command: AgentCommand;
-      profile: SiteProfile;
+      profile: SiteProfile | null;
     };
 
 export type AgentBrowserState = {

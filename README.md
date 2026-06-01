@@ -167,12 +167,22 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\windows\install-agent.ps1
 ```
 
-Os instaladores sao interativos e tentam validar a conexao WebSocket antes de registrar o servico/tarefa. Se a URL apontar para o painel ou a API recusar `DEVICE_ID`/`DEVICE_TOKEN`, a instalacao para com uma mensagem explicita. Erros transitorios de rede viram aviso e o agente instalado continua tentando reconectar.
+Windows 7 legado:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\windows7\install-agent.ps1
+```
+
+Os instaladores Linux e Windows 10/11 sao interativos e tentam validar a conexao WebSocket antes de registrar o servico/tarefa. Se a URL apontar para o painel ou a API recusar `DEVICE_ID`/`DEVICE_TOKEN`, a instalacao para com uma mensagem explicita. Erros transitorios de rede viram aviso e o agente instalado continua tentando reconectar.
+
+O agente Windows 7 usa polling HTTP em vez de WebSocket/Playwright, nao precisa de Node.js na maquina antiga e tem recursos reduzidos. Use apenas em maquinas antigas que precisam permanecer no Windows 7.
 
 Documentacao completa:
 
 - `docs/LINUX_AGENT_INSTALL.md`
 - `docs/WINDOWS_AGENT_INSTALL.md`
+- `docs/WINDOWS7_LEGACY_AGENT.md`
 
 ## Comandos do MVP
 
