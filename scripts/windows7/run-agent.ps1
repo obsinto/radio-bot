@@ -1403,47 +1403,51 @@ function Get-AutostartApps {
   $prefix = "RadioBOT Autostart"
   $items = New-Object System.Collections.Generic.List[object]
 
-  # schtasks lista todas as tarefas visiveis ao usuario. Usamos o formato CSV
-  # sem cabecalho: a coluna 0 e o nome (\Pasta\Tarefa) e a coluna 2 e o status.
-  $rows = & schtasks.exe /Query /FO CSV /NH 2>$null
-  foreach ($row in @($rows)) {
-    if ([string]::IsNullOrWhiteSpace($row)) {
-      continue
-    }
-    $cols = $row -split '","'
-    if ($cols.Count -lt 1) {
-      continue
-    }
-    $taskNameRaw = $cols[0].TrimStart('"').Trim()
-    $status = if ($cols.Count -ge 3) { $cols[2].TrimEnd('"').Trim() } else { "" }
-    $leaf = $taskNameRaw.TrimStart('\')
-    if ($leaf -notlike "$prefix*") {
+  # Usamos a API COM Schedule.Service em vez de schtasks.exe: o schtasks do
+  # Windows 7 (sobretudo localizado) rejeita combinacoes como "/FO CSV /NH" e
+  # "/XML ONE" por tarefa. O COM existe no Win7, dispensa admin para as tarefas
+  # do usuario e entrega o XML e o estado de cada tarefa diretamente.
+  $service = New-Object -ComObject "Schedule.Service"
+  $service.Connect()
+  $folder = $service.GetFolder("\")
+  # 1 = TASK_ENUM_HIDDEN, para nao perder tarefas marcadas como ocultas.
+  $tasks = $folder.GetTasks(1)
+
+  foreach ($task in $tasks) {
+    $name = [string]$task.Name
+    if ($name -notlike "$prefix*") {
       continue
     }
 
     $path = $null
     $workingDir = $null
     try {
-      $xmlText = (& schtasks.exe /Query /TN $taskNameRaw /XML ONE 2>$null) -join "`n"
-      if (-not [string]::IsNullOrWhiteSpace($xmlText)) {
-        [xml]$xml = $xmlText
-        $execPath = $xml.Task.Actions.Exec.Command
-        $execDir = $xml.Task.Actions.Exec.WorkingDirectory
-        if (-not [string]::IsNullOrWhiteSpace($execPath)) {
-          $path = [string]$execPath
-        }
-        if (-not [string]::IsNullOrWhiteSpace($execDir)) {
-          $workingDir = [string]$execDir
-        }
+      [xml]$xml = $task.Xml
+      $execPath = $xml.Task.Actions.Exec.Command
+      $execDir = $xml.Task.Actions.Exec.WorkingDirectory
+      if (-not [string]::IsNullOrWhiteSpace($execPath)) {
+        $path = [string]$execPath
+      }
+      if (-not [string]::IsNullOrWhiteSpace($execDir)) {
+        $workingDir = [string]$execDir
       }
     } catch {
     }
 
+    # TASK_STATE: 0 Unknown, 1 Disabled, 2 Queued, 3 Ready, 4 Running.
+    $stateText = switch ([int]$task.State) {
+      1 { "Disabled" }
+      2 { "Queued" }
+      3 { "Ready" }
+      4 { "Running" }
+      default { "Unknown" }
+    }
+
     $items.Add([pscustomobject]@{
-      taskName = $leaf
+      taskName = $name
       path = $path
       workingDir = $workingDir
-      state = $status
+      state = $stateText
     }) | Out-Null
   }
 
