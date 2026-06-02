@@ -1400,85 +1400,27 @@ function Set-AppAutostart {
 }
 
 function Get-AutostartApps {
-  $prefix = "RadioBOT Autostart"
   $items = New-Object System.Collections.Generic.List[object]
-  $usedCom = $false
+  $seen = @{}
 
-  # Primeiro tentamos a API COM Schedule.Service: ela entrega nome, XML (caminho
-  # do exe) e estado de cada tarefa. Em alguns Windows 7 o interop COM falha com
-  # "Os tipos de argumento nao correspondem", entao o bloco e tolerante a erro e
-  # caimos para um fallback via schtasks.
-  try {
-    $service = New-Object -ComObject "Schedule.Service"
-    # Connect tem 4 parametros opcionais (servidor, usuario, dominio, senha).
-    # Chamar sem argumentos faz alguns PowerShell do Win7 lancarem "Os tipos de
-    # argumento nao correspondem"; passamos $null explicitos para evitar isso.
-    $service.Connect($null, $null, $null, $null)
-    $folder = $service.GetFolder("\")
-    $tasks = $folder.GetTasks([int]0)
-
-    foreach ($task in $tasks) {
-      $name = [string]$task.Name
-      if ($name -notlike "$prefix*") {
-        continue
-      }
-
-      $path = $null
-      $workingDir = $null
-      try {
-        [xml]$xml = $task.Xml
-        $execPath = $xml.Task.Actions.Exec.Command
-        $execDir = $xml.Task.Actions.Exec.WorkingDirectory
-        if (-not [string]::IsNullOrWhiteSpace($execPath)) {
-          $path = [string]$execPath
-        }
-        if (-not [string]::IsNullOrWhiteSpace($execDir)) {
-          $workingDir = [string]$execDir
-        }
-      } catch {
-      }
-
-      # TASK_STATE: 0 Unknown, 1 Disabled, 2 Queued, 3 Ready, 4 Running.
-      $stateText = switch ([int]$task.State) {
-        1 { "Disabled" }
-        2 { "Queued" }
-        3 { "Ready" }
-        4 { "Running" }
-        default { "Unknown" }
-      }
-
-      $items.Add([pscustomobject]@{
-        taskName = $name
-        path = $path
-        workingDir = $workingDir
-        state = $stateText
-      }) | Out-Null
-    }
-
-    $usedCom = $true
-  } catch {
-    Write-Log "Falha ao listar tarefas via COM: $($_.Exception.Message). Usando fallback schtasks."
-  }
-
-  if (-not $usedCom) {
-    # Fallback independente de idioma: o caminho completo da tarefa
-    # (\RadioBOT Autostart - X) aparece como valor no /FO LIST. Extraimos por
-    # regex, sem depender do rotulo traduzido nem das flags /NH ou /XML.
-    $seen = @{}
-    $lines = & schtasks.exe /Query /FO LIST 2>$null
-    foreach ($line in @($lines)) {
-      $match = [regex]::Match([string]$line, '\\(RadioBOT Autostart[^\r\n]*?)\s*$')
-      if ($match.Success) {
-        $name = $match.Groups[1].Value.Trim()
-        if (-not $seen.ContainsKey($name)) {
-          $seen[$name] = $true
-          $items.Add([pscustomobject]@{
-            taskName = $name
-            path = $null
-            workingDir = $null
-            state = $null
-          }) | Out-Null
-        }
+  # Listagem 100% via schtasks /FO LIST (formato padrao, SEM /NH e SEM /XML, que
+  # dao erro no Windows 7). Nao usamos a API COM Schedule.Service: em alguns Win7
+  # ela lanca "Os tipos de argumento nao correspondem" de um jeito que escapa do
+  # try/catch. O caminho completo da tarefa (\RadioBOT Autostart - X) aparece
+  # como valor no /FO LIST; extraimos o nome por regex, independente do idioma.
+  $lines = & schtasks.exe /Query /FO LIST 2>$null
+  foreach ($line in @($lines)) {
+    $match = [regex]::Match([string]$line, '\\(RadioBOT Autostart[^\r\n]*?)\s*$')
+    if ($match.Success) {
+      $name = $match.Groups[1].Value.Trim()
+      if (-not $seen.ContainsKey($name)) {
+        $seen[$name] = $true
+        $items.Add([pscustomobject]@{
+          taskName = $name
+          path = $null
+          workingDir = $null
+          state = $null
+        }) | Out-Null
       }
     }
   }

@@ -1,0 +1,128 @@
+========================================================
+ATUALIZAR O AGENTE RADIO BOT NO WINDOWS 7
+========================================================
+
+Objetivo: garantir que o run-agent.ps1 NOVO chegue na maquina
+Windows 7 e seja usado pela tarefa agendada. O instalador apenas
+copia o run-agent.ps1 que esta AO LADO dele; entao o arquivo de
+origem precisa ser o novo ANTES de instalar.
+
+Como reconhecer a versao mais nova do arquivo:
+  - Contem o texto: SEM /NH e SEM /XML
+
+
+--------------------------------------------------------
+PASSO 1 - PEGAR O ARQUIVO NOVO (na maquina com o repositorio)
+--------------------------------------------------------
+
+Se voce usa git, atualize o repositorio:
+
+  git pull
+  git log --oneline -1
+
+Depois, na propria pasta do repositorio, confirme que o arquivo
+de origem ja tem o marcador novo:
+
+  - scripts\windows7\run-agent.ps1 deve conter "SEM /NH e SEM /XML"
+
+
+--------------------------------------------------------
+PASSO 2 - COPIAR PARA A MAQUINA WINDOWS 7
+--------------------------------------------------------
+
+Copie a pasta inteira:
+
+  scripts\windows7\
+
+para dentro de:
+
+  C:\RadioBOTInstaller\scripts\windows7\
+
+IMPORTANTE: o "colar" do Windows as vezes NAO substitui o arquivo
+antigo. Para garantir, apague o arquivo antigo antes de colar:
+
+  del "C:\RadioBOTInstaller\scripts\windows7\run-agent.ps1"
+
+Depois cole o novo no lugar.
+
+
+--------------------------------------------------------
+PASSO 3 - CONFERIR A ORIGEM ANTES DE INSTALAR
+--------------------------------------------------------
+
+Abra o PowerShell e rode:
+
+  Select-String -Path "C:\RadioBOTInstaller\scripts\windows7\run-agent.ps1" -Pattern "SEM /NH e SEM /XML"
+
+- Se MOSTRAR a linha: a origem esta correta, pode seguir.
+- Se NAO mostrar nada: a copia ainda e a antiga. Volte ao PASSO 2.
+
+
+--------------------------------------------------------
+PASSO 4 - RODAR O INSTALADOR
+--------------------------------------------------------
+
+  cd C:\RadioBOTInstaller
+  Set-ExecutionPolicy -Scope Process Bypass
+  .\scripts\windows7\install-agent.ps1
+
+Responda as perguntas normalmente (URL da API, Device ID, token, etc.).
+
+
+--------------------------------------------------------
+PASSO 5 - CONFERIR O ARQUIVO INSTALADO
+--------------------------------------------------------
+
+  Select-String -Path "C:\RadioBOTLegacy\run-agent.ps1" -Pattern "SEM /NH e SEM /XML"
+
+Agora DEVE mostrar a linha. Se mostrar, o agente foi atualizado.
+
+
+--------------------------------------------------------
+PASSO 6 - TESTAR NO PAINEL
+--------------------------------------------------------
+
+Deixe o log aberto:
+
+  Get-Content C:\RadioBOTLegacy\agent.log -Tail 30 -Wait
+
+No painel, abra "Inicializacao de aplicativo" e clique para listar.
+No log, o esperado e:
+
+  "Comando concluido: list_autostart_apps"
+     -> funcionou. A lista aparece no painel com os apps configurados
+        (mostra o nome; o caminho pode ficar em branco, e normal).
+
+Se aparecer "Comando falhou: list_autostart_apps", o arquivo ainda
+e o antigo: repita a partir do PASSO 2.
+
+Para remover um app: clique em Remover no item desejado. No log deve
+sair "Comando concluido: remove_autostart_app".
+
+
+--------------------------------------------------------
+DIAGNOSTICO RAPIDO (copia e cola tudo de uma vez)
+--------------------------------------------------------
+
+  "C:\RadioBOTInstaller\scripts\windows7\run-agent.ps1", "C:\RadioBOTLegacy\run-agent.ps1" | ForEach-Object {
+    if (Test-Path $_) {
+      $tem = (Select-String -Path $_ -Pattern "SEM /NH e SEM /XML" -Quiet)
+      "{0}`n  novo={1}  modificado={2}" -f $_, $tem, (Get-Item $_).LastWriteTime
+    } else {
+      "$_  -> NAO EXISTE"
+    }
+  }
+
+Leitura do resultado:
+  - origem com novo=False  -> a copia para a Win7 nao pegou. PASSO 2.
+  - origem True e instalada False -> rode o instalador. PASSO 4.
+  - as duas True -> esta atualizado. Pode testar. PASSO 6.
+
+
+--------------------------------------------------------
+OBSERVACAO
+--------------------------------------------------------
+
+Buscar aplicativos, Inicializar app e o envio de resultado ja
+estao confirmados funcionando. Esta atualizacao destrava o
+Listar e o Remover na inicializacao.
