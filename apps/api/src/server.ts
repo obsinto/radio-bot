@@ -536,6 +536,67 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     return command.id;
   }
 
+  async function resumeRadioOnReconnect(input: {
+    deviceId: string;
+    reportedState?: Partial<AgentBrowserState> | null;
+  }): Promise<void> {
+    const device = await store.getDevice(input.deviceId);
+    if (!device) {
+      return;
+    }
+
+    // Se o agente ja reporta uma radio ativa, ele nao reiniciou a reproducao:
+    // nao reabrimos para nao interromper o que ja esta tocando.
+    if (input.reportedState?.currentProfileId) {
+      return;
+    }
+
+    const recent = await store.listRecentCommands();
+    const deviceCommands = recent.filter((command) => command.deviceId === input.deviceId);
+
+    // Nao duplica: ja ha um comando de abertura/reproducao a caminho do agente.
+    // power_on nao conta porque vai para o gateway ESP32, nao para o agente.
+    const hasPendingAgentCommand = deviceCommands.some(
+      (command) =>
+        command.action !== "power_on" &&
+        (command.status === "queued" || command.status === "sent")
+    );
+    if (hasPendingAgentCommand) {
+      return;
+    }
+
+    // Rádio a tocar: preferimos a selecionada no ultimo "ligar o PC" (power_on)
+    // recente, que e a escolha explicita do usuario nesse boot. Caso contrario,
+    // a ultima radio que tocou (currentProfileId, preservado pelo `?? `).
+    const RECENT_POWER_ON_MS = 15 * 60 * 1000;
+    const recentPowerOnProfileId = deviceCommands
+      .filter(
+        (command) =>
+          command.action === "power_on" &&
+          command.profileId &&
+          Date.now() - new Date(command.createdAt).getTime() <= RECENT_POWER_ON_MS
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.profileId;
+
+    const profileId = recentPowerOnProfileId ?? device.currentProfileId;
+    if (!profileId || !device.profileIds.includes(profileId)) {
+      return;
+    }
+
+    const profile = await store.getProfile(profileId);
+    if (!profile) {
+      return;
+    }
+
+    await store.createCommand({
+      action: profile.username && profile.password ? "login" : "open_site",
+      profileId,
+      deviceId: input.deviceId,
+      requestedBy: "system:auto-resume",
+      payload: {}
+    });
+  }
+
   async function executionProfile(schedule: ScheduleRecord) {
     if (schedule.profileId) {
       return store.getProfile(schedule.profileId);
@@ -1502,10 +1563,22 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     }
 
     const deviceId = credentials.deviceId;
+    // Se o agente nao estava "fresco", este poll e uma reconexao (ex.: o PC
+    // acabou de ligar). Detectamos antes de atualizar o timestamp de frescor.
+    const wasConnected = isLegacyAgentFresh(deviceId);
     legacyAgents.set(deviceId, Date.now());
     await store.markDeviceOnline(deviceId);
     if (request.body?.state) {
       await store.updateDeviceState(deviceId, request.body.state);
+    }
+
+    if (!wasConnected) {
+      // Reabre a ultima radio selecionada quando o computador volta a ligar.
+      // Enfileirado antes de reservar para ser entregue ja neste poll.
+      await resumeRadioOnReconnect({
+        deviceId,
+        reportedState: request.body?.state ?? null
+      });
     }
 
     const command = await store.reserveAgentCommand(deviceId);

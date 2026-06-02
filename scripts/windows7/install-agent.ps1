@@ -104,6 +104,26 @@ function Escape-SingleQuoted {
   return $Value.Replace("'", "''")
 }
 
+function Resolve-ChromePath {
+  $roots = @(
+    $env:ProgramFiles,
+    [Environment]::GetEnvironmentVariable("ProgramFiles(x86)"),
+    $env:LocalAppData
+  )
+
+  foreach ($root in $roots) {
+    if ([string]::IsNullOrWhiteSpace($root)) {
+      continue
+    }
+    $candidate = Join-Path $root "Google\Chrome\Application\chrome.exe"
+    if (Test-Path -LiteralPath $candidate) {
+      return $candidate
+    }
+  }
+
+  return ""
+}
+
 function Invoke-Native {
   param(
     [string]$FilePath,
@@ -131,9 +151,15 @@ $InstallDir = Read-RequiredText -Prompt "Pasta de instalacao" -Default $InstallD
 $ApiUrl = Read-RequiredText -Prompt "URL da API" -Default "https://api.seu-dominio.com"
 $DeviceId = Read-RequiredText -Prompt "Device ID do computador"
 $DeviceToken = Read-RequiredSecret -Prompt "Device token"
-$BrowserPath = Read-OptionalText -Prompt "Caminho do navegador (ENTER para usar navegador padrao)" -Default ""
+$BrowserPath = Read-OptionalText -Prompt "Caminho do Chrome (ENTER para detectar automaticamente)" -Default (Resolve-ChromePath)
 $TaskName = Read-RequiredText -Prompt "Nome da tarefa agendada" -Default $TaskName
 $ShutdownDryRun = Read-BooleanString -Prompt "Simular desligamento do computador (SHUTDOWN_DRY_RUN)?" -Default "true"
+
+$chromeDebugPortText = Read-OptionalText -Prompt "Porta local do Chrome DevTools" -Default "9222"
+$ChromeDebugPort = 9222
+if ([int]::TryParse($chromeDebugPortText, [ref]$ChromeDebugPort) -eq $false -or $ChromeDebugPort -lt 1024) {
+  $ChromeDebugPort = 9222
+}
 
 $pollText = Read-OptionalText -Prompt "Intervalo de polling em segundos" -Default "5"
 $PollSeconds = 5
@@ -152,6 +178,7 @@ if (-not (Test-Path -LiteralPath $SourceRunner)) {
 $RunScript = Join-Path $InstallDir "run-agent.ps1"
 $ConfigFile = Join-Path $InstallDir "agent.config.ps1"
 $LogFile = Join-Path $InstallDir "agent.log"
+$ChromeUserDataDir = Join-Path $InstallDir "chrome-profile"
 
 Copy-Item -LiteralPath $SourceRunner -Destination $RunScript -Force
 
@@ -160,10 +187,24 @@ Copy-Item -LiteralPath $SourceRunner -Destination $RunScript -Force
 `$DeviceId = '$(Escape-SingleQuoted $DeviceId)'
 `$DeviceToken = '$(Escape-SingleQuoted $DeviceToken)'
 `$BrowserPath = '$(Escape-SingleQuoted $BrowserPath)'
+`$ChromeDebugPort = $ChromeDebugPort
+`$ChromeUserDataDir = '$(Escape-SingleQuoted $ChromeUserDataDir)'
 `$PollSeconds = $PollSeconds
 `$ShutdownDryRun = '$(Escape-SingleQuoted $ShutdownDryRun)'
 `$LogFile = '$(Escape-SingleQuoted $LogFile)'
 "@ | Set-Content -Path $ConfigFile -Encoding utf8
+
+$escapedInstallDir = $InstallDir.Replace("\", "\\")
+schtasks.exe /End /TN $TaskName 2>$null | Out-Null
+Get-WmiObject Win32_Process |
+  Where-Object {
+    $_.CommandLine -and
+    ($_.CommandLine -match [regex]::Escape($InstallDir) -or $_.CommandLine -match [regex]::Escape($escapedInstallDir)) -and
+    $_.CommandLine -match "run-agent.ps1"
+  } |
+  ForEach-Object {
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+  }
 
 $TaskCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$RunScript`" -ConfigFile `"$ConfigFile`""
 Invoke-Native -FilePath "schtasks.exe" -Arguments @("/Create", "/F", "/SC", "ONLOGON", "/TN", $TaskName, "/TR", $TaskCommand) -Step "Criando tarefa agendada"

@@ -25,6 +25,12 @@ type MediaState = {
   errors?: number;
 };
 
+type ClickResult = {
+  clicked: boolean;
+  selector: string | null;
+  frameUrl: string | null;
+};
+
 export class BrowserController {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
@@ -267,12 +273,14 @@ export class BrowserController {
 
   private async openSite(profile: SiteProfile): Promise<void> {
     await this.pauseActiveMediaBeforeNavigation(profile.siteUrl);
+    await this.closeExtraPages();
     const page = await this.ensurePage(profile);
     await page.goto(profile.siteUrl, {
       waitUntil: "domcontentloaded",
       timeout: 30000
     });
     await page.waitForTimeout(1000);
+    await this.closeExtraPages(page);
   }
 
   private async pauseActiveMediaBeforeNavigation(targetUrl: string): Promise<void> {
@@ -296,6 +304,25 @@ export class BrowserController {
       this.page = null;
       return null;
     }
+  }
+
+  private async closeExtraPages(keepPage?: Page): Promise<void> {
+    if (!this.context) {
+      return;
+    }
+
+    const pages = this.context.pages().filter((page) => !page.isClosed());
+    const keep = keepPage ?? this.page ?? pages[0] ?? null;
+
+    for (const page of pages) {
+      if (page === keep) {
+        continue;
+      }
+      await this.pauseMediaElements(page).catch(() => undefined);
+      await page.close().catch(() => undefined);
+    }
+
+    this.page = keep && !keep.isClosed() ? keep : null;
   }
 
   private async detectSitePrompt(timeoutMs = 10000): Promise<SitePrompt | null> {
@@ -358,9 +385,14 @@ export class BrowserController {
   private async playCurrentPage(profile: SiteProfile, currentPage?: Page): Promise<Record<string, unknown>> {
     const page = currentPage ?? (await this.ensurePage(profile));
     const selectors = this.actionSelectors(profile, "play", [
+      "#ap-toggle",
+      ".play-btn",
       'button[aria-label*="play" i]',
       '[role="button"][aria-label*="play" i]',
+      'button[aria-label*="iniciar" i]',
+      '[role="button"][aria-label*="iniciar" i]',
       '[title*="play" i]',
+      '[title*="iniciar" i]',
       'button:has-text("Play")',
       'a:has-text("Play")',
       'button:has-text("Ouvir")',
@@ -368,18 +400,37 @@ export class BrowserController {
       '[role="button"]:has-text("Ouvir")',
       'button:has-text("Ao vivo")',
       'a:has-text("Ao vivo")',
+      'button:has-text("Iniciar")',
+      'a:has-text("Iniciar")',
+      'button:has-text("Tocar")',
+      'a:has-text("Tocar")',
       ".btn-play",
       ".play"
     ]);
 
-    const clicked = await this.clickFirstInFrames(page, selectors);
-    if (clicked.clicked) {
+    const promptClicked = await this.clickPlayerStartPrompt(page);
+    if (promptClicked.clicked) {
       await page.waitForTimeout(1000);
     }
 
-    const media = await this.playMediaElements(page);
+    let media = await this.playMediaElements(page);
+    let clicked: ClickResult = {
+      clicked: false,
+      selector: null,
+      frameUrl: null
+    };
+
+    if (!promptClicked.clicked || media.playing === 0) {
+      clicked = await this.clickFirstInFrames(page, selectors);
+    }
+    if (clicked.clicked) {
+      await page.waitForTimeout(1000);
+      media = await this.playMediaElements(page);
+    }
+
     return {
       action: "play_radio",
+      promptClicked,
       clicked,
       media,
       activeUrl: page.url()
@@ -400,6 +451,8 @@ export class BrowserController {
     }
 
     const selectors = this.actionSelectors(profile, "stop", [
+      "#ap-toggle",
+      ".play-btn",
       'button[aria-label*="pause" i]',
       '[role="button"][aria-label*="pause" i]',
       '[title*="pause" i]',
@@ -502,10 +555,47 @@ export class BrowserController {
     ].filter((selector): selector is string => Boolean(selector));
   }
 
+  private async clickPlayerStartPrompt(page: Page): Promise<ClickResult> {
+    for (const frame of page.frames()) {
+      const promptVisible = await frame
+        .getByText(/clique no bot.o abaixo para iniciar o player/i)
+        .first()
+        .isVisible()
+        .catch(() => false);
+
+      if (!promptVisible) {
+        continue;
+      }
+
+      const selector = await this.clickFirstSelector(frame, [
+        'button:has-text("Ok")',
+        'button:has-text("OK")',
+        'button:has-text("Iniciar")',
+        'button:has-text("Tocar")',
+        '[role="button"]:has-text("Ok")',
+        '[role="button"]:has-text("OK")'
+      ]);
+
+      if (selector) {
+        return {
+          clicked: true,
+          selector,
+          frameUrl: frame.url()
+        };
+      }
+    }
+
+    return {
+      clicked: false,
+      selector: null,
+      frameUrl: null
+    };
+  }
+
   private async clickFirstInFrames(
     page: Page,
     selectors: string[]
-  ): Promise<{ clicked: boolean; selector: string | null; frameUrl: string | null }> {
+  ): Promise<ClickResult> {
     for (const frame of page.frames()) {
       const selector = await this.clickFirstSelector(frame, selectors);
       if (selector) {
