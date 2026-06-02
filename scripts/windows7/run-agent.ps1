@@ -1410,9 +1410,12 @@ function Get-AutostartApps {
   # caimos para um fallback via schtasks.
   try {
     $service = New-Object -ComObject "Schedule.Service"
-    $service.Connect()
+    # Connect tem 4 parametros opcionais (servidor, usuario, dominio, senha).
+    # Chamar sem argumentos faz alguns PowerShell do Win7 lancarem "Os tipos de
+    # argumento nao correspondem"; passamos $null explicitos para evitar isso.
+    $service.Connect($null, $null, $null, $null)
     $folder = $service.GetFolder("\")
-    $tasks = $folder.GetTasks(0)
+    $tasks = $folder.GetTasks([int]0)
 
     foreach ($task in $tasks) {
       $name = [string]$task.Name
