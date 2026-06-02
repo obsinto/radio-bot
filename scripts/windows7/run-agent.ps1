@@ -94,9 +94,9 @@ $script:CurrentProfileId = $null
 $script:ActiveUrl = $null
 $script:Title = "Radio BOT Legacy Agent"
 $script:MediaKeysLoaded = $false
-# Diagnostico temporario: loga cada frame WebSocket do CDP para investigar
-# truncamento de respostas grandes. Pode ser desligado depois (= $false).
-$script:CdpDebug = $true
+# Diagnostico opcional: loga cada frame WebSocket do CDP (header/fin/opcode/len)
+# e o texto cru quando o JSON falha. Ligue (= $true) so para investigar.
+$script:CdpDebug = $false
 
 function Get-AgentState {
   return @{
