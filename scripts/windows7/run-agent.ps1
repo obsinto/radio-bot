@@ -162,12 +162,17 @@ function Invoke-AgentApi {
 
   $uri = Build-AgentUri -Path $Path
   $json = $Body | ConvertTo-Json -Depth 12 -Compress
+  # No PowerShell 5.1, o Invoke-RestMethod envia uma string -Body como
+  # ISO-8859-1 por padrao. Qualquer caractere acentuado (ex.: "Portugues",
+  # "nao") vira byte invalido e a API rejeita o JSON com HTTP 400. Enviando o
+  # corpo ja codificado em bytes UTF-8 garantimos a transmissao correta.
+  $bytes = [Text.Encoding]::UTF8.GetBytes($json)
   return Invoke-RestMethod `
     -Method Post `
     -Uri $uri `
     -Headers @{ Authorization = "Bearer $DeviceToken" } `
-    -ContentType "application/json" `
-    -Body $json `
+    -ContentType "application/json; charset=utf-8" `
+    -Body $bytes `
     -TimeoutSec 30
 }
 
