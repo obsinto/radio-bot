@@ -1037,6 +1037,363 @@ function Invoke-Shutdown {
   }
 }
 
+function ConvertTo-XmlText {
+  param([string]$Value)
+  if ($null -eq $Value) {
+    return ""
+  }
+  return $Value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace('"', "&quot;")
+}
+
+function Resolve-CandidatePath {
+  param([string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return $null
+  }
+  $expanded = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+  if ([string]::IsNullOrWhiteSpace($expanded)) {
+    return $null
+  }
+  try {
+    return (Resolve-Path -LiteralPath $expanded -ErrorAction Stop).Path
+  } catch {
+    return $expanded
+  }
+}
+
+function Get-CandidateId {
+  param([string]$Key)
+
+  $sha1 = [Security.Cryptography.SHA1]::Create()
+  try {
+    $bytes = $sha1.ComputeHash([Text.Encoding]::UTF8.GetBytes($Key))
+  } finally {
+    $sha1.Dispose()
+  }
+  $hex = ($bytes | ForEach-Object { $_.ToString("x2") }) -join ""
+  return $hex.Substring(0, 12)
+}
+
+function Get-IconExecutablePath {
+  param([string]$Icon)
+
+  if ([string]::IsNullOrWhiteSpace($Icon)) {
+    return $null
+  }
+  $value = $Icon.Trim()
+  if ($value -match '^"([^"]+)"') {
+    $value = $Matches[1]
+  } else {
+    $value = ($value -split ",")[0].Trim().Trim('"')
+  }
+  $value = [Environment]::ExpandEnvironmentVariables($value)
+  if ([string]::IsNullOrWhiteSpace($value)) {
+    return $null
+  }
+  if (-not $value.EndsWith(".exe", [StringComparison]::OrdinalIgnoreCase)) {
+    return $null
+  }
+  return $value
+}
+
+function Add-ExecutableCandidate {
+  param(
+    [System.Collections.Generic.List[object]]$Items,
+    [hashtable]$Seen,
+    [string]$Needle,
+    [int]$Limit,
+    [string]$Name,
+    [string]$Path,
+    [string]$WorkingDir,
+    [string]$Source,
+    [string]$Publisher,
+    [string]$Version
+  )
+
+  if ($Items.Count -ge ($Limit * 2)) {
+    return
+  }
+
+  $resolved = Resolve-CandidatePath -Path $Path
+  if ([string]::IsNullOrWhiteSpace($resolved)) {
+    return
+  }
+  if (-not $resolved.EndsWith(".exe", [StringComparison]::OrdinalIgnoreCase)) {
+    return
+  }
+  if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+    return
+  }
+
+  $key = $resolved.ToLowerInvariant()
+  if ($Seen.ContainsKey($key)) {
+    return
+  }
+
+  $displayName = if (-not [string]::IsNullOrWhiteSpace($Name)) {
+    $Name.Trim()
+  } else {
+    [IO.Path]::GetFileNameWithoutExtension($resolved)
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($Needle)) {
+    $match = $false
+    foreach ($value in @($displayName, $resolved, $Publisher)) {
+      if (-not [string]::IsNullOrWhiteSpace($value) -and $value.IndexOf($Needle, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $match = $true
+        break
+      }
+    }
+    if (-not $match) {
+      return
+    }
+  }
+
+  $resolvedWorkingDir = Resolve-CandidatePath -Path $WorkingDir
+  if ([string]::IsNullOrWhiteSpace($resolvedWorkingDir) -or -not (Test-Path -LiteralPath $resolvedWorkingDir -PathType Container)) {
+    $resolvedWorkingDir = [IO.Path]::GetDirectoryName($resolved)
+  }
+
+  $Seen[$key] = $true
+  $Items.Add([pscustomobject]@{
+    id = Get-CandidateId -Key $key
+    name = $displayName
+    path = $resolved
+    workingDir = $resolvedWorkingDir
+    source = $Source
+    publisher = $(if ([string]::IsNullOrWhiteSpace($Publisher)) { $null } else { $Publisher.Trim() })
+    version = $(if ([string]::IsNullOrWhiteSpace($Version)) { $null } else { $Version.Trim() })
+  }) | Out-Null
+}
+
+function Search-CommonExecutablePath {
+  param(
+    [System.Collections.Generic.List[object]]$Items,
+    [hashtable]$Seen,
+    [string]$Needle,
+    [int]$Limit,
+    [string]$Root,
+    [int]$Depth
+  )
+
+  if ($Items.Count -ge $Limit) {
+    return
+  }
+  if ([string]::IsNullOrWhiteSpace($Root) -or -not (Test-Path -LiteralPath $Root -PathType Container)) {
+    return
+  }
+
+  Get-ChildItem -LiteralPath $Root -Filter "*.exe" -File -ErrorAction SilentlyContinue | ForEach-Object {
+    Add-ExecutableCandidate -Items $Items -Seen $Seen -Needle $Needle -Limit $Limit -Name ([IO.Path]::GetFileNameWithoutExtension($_.Name)) -Path $_.FullName -WorkingDir $_.DirectoryName -Source "common_path" -Publisher $null -Version $null
+  }
+
+  if ($Depth -le 0 -or $Items.Count -ge $Limit) {
+    return
+  }
+
+  Get-ChildItem -LiteralPath $Root -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    Search-CommonExecutablePath -Items $Items -Seen $Seen -Needle $Needle -Limit $Limit -Root $_.FullName -Depth ($Depth - 1)
+  }
+}
+
+function Find-Executables {
+  param(
+    [string]$Query = "",
+    [int]$Limit = 80
+  )
+
+  if ($Limit -lt 1 -or $Limit -gt 200) {
+    $Limit = 80
+  }
+  $needle = $Query.Trim()
+  $items = New-Object System.Collections.Generic.List[object]
+  $seen = @{}
+
+  $startRoots = @(
+    "$env:ProgramData\Microsoft\Windows\Start Menu\Programs",
+    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+  )
+  $wsh = New-Object -ComObject WScript.Shell
+  foreach ($root in $startRoots) {
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+      continue
+    }
+    Get-ChildItem -LiteralPath $root -Filter "*.lnk" -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+      try {
+        $shortcut = $wsh.CreateShortcut($_.FullName)
+        Add-ExecutableCandidate -Items $items -Seen $seen -Needle $needle -Limit $Limit -Name ([IO.Path]::GetFileNameWithoutExtension($_.Name)) -Path $shortcut.TargetPath -WorkingDir $shortcut.WorkingDirectory -Source "start_menu" -Publisher $null -Version $null
+      } catch {
+      }
+    }
+  }
+
+  $regRoots = @(
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+  )
+  foreach ($root in $regRoots) {
+    Get-ItemProperty -Path $root -ErrorAction SilentlyContinue | ForEach-Object {
+      $displayName = $_.DisplayName
+      if (-not [string]::IsNullOrWhiteSpace($displayName)) {
+        $publisher = $_.Publisher
+        $version = $_.DisplayVersion
+        $installLocation = Resolve-CandidatePath -Path $_.InstallLocation
+        $iconPath = Get-IconExecutablePath -Icon $_.DisplayIcon
+
+        if (-not [string]::IsNullOrWhiteSpace($iconPath)) {
+          Add-ExecutableCandidate -Items $items -Seen $seen -Needle $needle -Limit $Limit -Name $displayName -Path $iconPath -WorkingDir $installLocation -Source "registry" -Publisher $publisher -Version $version
+        } elseif (-not [string]::IsNullOrWhiteSpace($installLocation) -and (Test-Path -LiteralPath $installLocation -PathType Container)) {
+          Get-ChildItem -LiteralPath $installLocation -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+            Select-Object -First 4 |
+            ForEach-Object {
+              Add-ExecutableCandidate -Items $items -Seen $seen -Needle $needle -Limit $Limit -Name $displayName -Path $_.FullName -WorkingDir $installLocation -Source "registry" -Publisher $publisher -Version $version
+            }
+        }
+      }
+    }
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($needle) -and $items.Count -lt $Limit) {
+    $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    foreach ($root in @($env:ProgramFiles, $programFilesX86, "$env:LOCALAPPDATA\Programs")) {
+      Search-CommonExecutablePath -Items $items -Seen $seen -Needle $needle -Limit $Limit -Root $root -Depth 2
+    }
+  }
+
+  $result = @($items | Select-Object -First $Limit)
+  return @{
+    candidates = $result
+    truncated = ($items.Count -gt $Limit)
+  }
+}
+
+function Set-AppAutostart {
+  param(
+    [string]$ExePath,
+    [string]$WorkingDir,
+    [string]$TaskName,
+    [string]$AppName
+  )
+
+  if ([string]::IsNullOrWhiteSpace($ExePath)) {
+    throw "Caminho do executavel nao informado."
+  }
+  $resolvedExe = (Resolve-Path -LiteralPath $ExePath -ErrorAction Stop).Path
+  if (-not $resolvedExe.EndsWith(".exe", [StringComparison]::OrdinalIgnoreCase)) {
+    throw "O caminho informado precisa apontar para um arquivo .exe."
+  }
+  if (-not (Test-Path -LiteralPath $resolvedExe -PathType Leaf)) {
+    throw "Executavel nao encontrado: $resolvedExe"
+  }
+
+  if ([string]::IsNullOrWhiteSpace($WorkingDir)) {
+    $WorkingDir = [IO.Path]::GetDirectoryName($resolvedExe)
+  }
+  $resolvedWorkingDir = (Resolve-Path -LiteralPath $WorkingDir -ErrorAction Stop).Path
+  if (-not (Test-Path -LiteralPath $resolvedWorkingDir -PathType Container)) {
+    throw "Pasta de trabalho nao encontrada: $resolvedWorkingDir"
+  }
+
+  if ([string]::IsNullOrWhiteSpace($AppName)) {
+    $AppName = [IO.Path]::GetFileNameWithoutExtension($resolvedExe)
+  }
+  if ([string]::IsNullOrWhiteSpace($TaskName)) {
+    $TaskName = "RadioBOT Autostart - $AppName"
+  }
+  $TaskName = ($TaskName -replace '[\\/:*?"<>|]', '-').Trim()
+  if ([string]::IsNullOrWhiteSpace($TaskName)) {
+    throw "Nome da tarefa agendada invalido."
+  }
+
+  $userId = "$env:USERDOMAIN\$env:USERNAME"
+
+  # O Windows 7 nao tem os cmdlets *-ScheduledTask (introduzidos no Windows 8 /
+  # Server 2012). Registramos a tarefa de logon via schtasks.exe com um XML no
+  # schema 1.2, que e o equivalente legado ao Register-ScheduledTask do agente
+  # moderno e permite definir a pasta de trabalho (WorkingDirectory).
+  $xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Abre $(ConvertTo-XmlText $AppName) automaticamente no logon pelo Radio BOT.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>$(ConvertTo-XmlText $userId)</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$(ConvertTo-XmlText $userId)</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$(ConvertTo-XmlText $resolvedExe)</Command>
+      <WorkingDirectory>$(ConvertTo-XmlText $resolvedWorkingDir)</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"@
+
+  $xmlPath = Join-Path $env:TEMP ("radiobot-autostart-" + ([Guid]::NewGuid().ToString("N")) + ".xml")
+  # schtasks.exe espera o XML em UTF-16 (Unicode); gravamos com BOM.
+  [IO.File]::WriteAllText($xmlPath, $xml, [Text.Encoding]::Unicode)
+  try {
+    $createOutput = & schtasks.exe /Create /TN $TaskName /XML $xmlPath /F 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      $detail = ($createOutput | Out-String).Trim()
+      throw "Falha ao registrar tarefa agendada (schtasks $LASTEXITCODE): $detail"
+    }
+  } finally {
+    Remove-Item -LiteralPath $xmlPath -Force -ErrorAction SilentlyContinue
+  }
+
+  $state = "Ready"
+  try {
+    $query = & schtasks.exe /Query /TN $TaskName /FO LIST 2>$null
+    $statusLine = $query | Where-Object { $_ -match "^\s*Status:" } | Select-Object -First 1
+    if ($statusLine) {
+      $state = ($statusLine -replace "^\s*Status:\s*", "").Trim()
+    }
+  } catch {
+  }
+
+  return @{
+    action = "configure_autostart_app"
+    configured = $true
+    platform = "win32"
+    taskName = $TaskName
+    userId = $userId
+    path = $resolvedExe
+    workingDir = $resolvedWorkingDir
+    state = $state
+    legacyMode = $true
+  }
+}
+
 function Invoke-LegacyCommand {
   param(
     [object]$Command,
@@ -1145,6 +1502,36 @@ function Invoke-LegacyCommand {
       $playResult["confirmedOpenHere"] = $false
       return @{
         output = $playResult
+        state = Get-AgentState
+      }
+    }
+
+    "discover_executables" {
+      $query = [string](Get-PropertyValue -Object $payload -Name "query" -Default "")
+      $limit = [int](Get-PropertyValue -Object $payload -Name "limit" -Default 80)
+      $discovery = Find-Executables -Query $query -Limit $limit
+      $candidates = @($discovery.candidates)
+      return @{
+        output = @{
+          action = "discover_executables"
+          platform = "win32"
+          query = $query
+          count = $candidates.Count
+          truncated = [bool]$discovery.truncated
+          candidates = $candidates
+          legacyMode = $true
+        }
+        state = Get-AgentState
+      }
+    }
+
+    "configure_autostart_app" {
+      $exePath = [string](Get-PropertyValue -Object $payload -Name "path" -Default (Get-PropertyValue -Object $payload -Name "executablePath" -Default ""))
+      $appName = [string](Get-PropertyValue -Object $payload -Name "name" -Default "")
+      $workingDir = [string](Get-PropertyValue -Object $payload -Name "workingDir" -Default "")
+      $taskNameIn = [string](Get-PropertyValue -Object $payload -Name "taskName" -Default "")
+      return @{
+        output = Set-AppAutostart -ExePath $exePath -WorkingDir $workingDir -TaskName $taskNameIn -AppName $appName
         state = Get-AgentState
       }
     }

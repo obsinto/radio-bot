@@ -23,7 +23,8 @@ Quando recebe `play_radio` ou `stop_playback`, ele tenta controlar a pagina pelo
 - Nao usa Playwright; o controle de pagina e limitado ao Chrome DevTools local.
 - `screenshot` captura a area de trabalho inteira, nao apenas a aba do navegador.
 - `play_radio` e `stop_playback` tentam Chrome DevTools primeiro e depois teclas multimidia.
-- `click_action`, `discover_executables` e `configure_autostart_app` nao sao suportados neste agente.
+- `click_action` nao e suportado neste agente.
+- `discover_executables` e `configure_autostart_app` (Inicializacao de aplicativo) sao suportados. Como o Windows 7 nao tem os cmdlets `*-ScheduledTask`, a tarefa de logon e criada com `schtasks.exe` a partir de um XML (schema 1.2), em vez de `Register-ScheduledTask`.
 
 O objetivo desta versao e validar e operar o fluxo minimo: online/offline, abrir URL, capturar tela, tocar/parar por tecla de midia e desligamento.
 
