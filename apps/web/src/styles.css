@@ -370,6 +370,15 @@ button:disabled {
   color: var(--amber);
 }
 
+.small-action.danger {
+  background: #4a1d1d;
+  color: #ffe3e3;
+}
+
+.small-action.danger svg {
+  color: #ff9b9b;
+}
+
 .token-box {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);

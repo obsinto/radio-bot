@@ -3,9 +3,11 @@ import { createHash } from "node:crypto";
 import { platform } from "node:os";
 import { win32 } from "node:path";
 import { promisify } from "node:util";
-import type { CommandPayload, ExecutableCandidate } from "@radio-bot/shared";
+import type { AutostartEntry, CommandPayload, ExecutableCandidate } from "@radio-bot/shared";
 
 const execFileAsync = promisify(execFile);
+
+const AUTOSTART_TASK_PREFIX = "RadioBOT Autostart";
 
 type DiscoveryScriptResult = {
   candidates?: unknown;
@@ -18,6 +20,15 @@ type ConfigureScriptResult = {
   path?: unknown;
   workingDir?: unknown;
   state?: unknown;
+};
+
+type ListAutostartScriptResult = {
+  tasks?: unknown;
+};
+
+type RemoveAutostartScriptResult = {
+  taskName?: unknown;
+  removed?: unknown;
 };
 
 const DISCOVER_EXECUTABLES_SCRIPT = String.raw`
@@ -315,6 +326,60 @@ $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
 } | ConvertTo-Json -Depth 4 -Compress
 `;
 
+const LIST_AUTOSTART_SCRIPT = String.raw`
+$ErrorActionPreference = "Stop"
+
+$prefix = "RadioBOT Autostart"
+$items = New-Object System.Collections.Generic.List[object]
+
+Get-ScheduledTask -ErrorAction SilentlyContinue |
+  Where-Object { $_.TaskName -like "$prefix*" } |
+  ForEach-Object {
+    $task = $_
+    $exec = @($task.Actions | Where-Object { $_.Execute })
+    $path = $null
+    $workingDir = $null
+    if ($exec.Count -gt 0) {
+      $path = $exec[0].Execute
+      $workingDir = $exec[0].WorkingDirectory
+    }
+    $items.Add([pscustomobject]@{
+      taskName = $task.TaskName
+      path = $(if ([string]::IsNullOrWhiteSpace($path)) { $null } else { $path })
+      workingDir = $(if ([string]::IsNullOrWhiteSpace($workingDir)) { $null } else { $workingDir })
+      state = [string]$task.State
+    }) | Out-Null
+  }
+
+[pscustomobject]@{
+  tasks = @($items)
+} | ConvertTo-Json -Depth 5 -Compress
+`;
+
+const REMOVE_AUTOSTART_SCRIPT = String.raw`
+$ErrorActionPreference = "Stop"
+
+$taskName = [Environment]::GetEnvironmentVariable("RADIO_BOT_AUTOSTART_TASK")
+if ([string]::IsNullOrWhiteSpace($taskName)) {
+  throw "Nome da tarefa nao informado."
+}
+if ($taskName -notlike "RadioBOT Autostart*") {
+  throw "So e permitido remover tarefas criadas pelo Radio BOT."
+}
+
+$task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if (-not $task) {
+  throw "Tarefa nao encontrada: $taskName"
+}
+
+Unregister-ScheduledTask -TaskName $taskName -Confirm:$false | Out-Null
+
+[pscustomobject]@{
+  taskName = $taskName
+  removed = $true
+} | ConvertTo-Json -Compress
+`;
+
 export async function discoverWindowsExecutables(payload: CommandPayload): Promise<Record<string, unknown>> {
   assertWindows();
   const query = optionalPayloadString(payload, "query") ?? "";
@@ -382,6 +447,46 @@ export async function configureWindowsAutostart(payload: CommandPayload): Promis
     path: stringOrNull(result.path) ?? executablePath,
     workingDir: stringOrNull(result.workingDir) ?? workingDir,
     state: stringOrNull(result.state)
+  };
+}
+
+export async function listWindowsAutostart(_payload: CommandPayload): Promise<Record<string, unknown>> {
+  assertWindows();
+  const result = await runPowerShellJson<ListAutostartScriptResult>(LIST_AUTOSTART_SCRIPT, {}, 15000);
+  const rawTasks = Array.isArray(result.tasks) ? result.tasks : result.tasks ? [result.tasks] : [];
+  const tasks = normalizeAutostartEntries(rawTasks);
+
+  return {
+    action: "list_autostart_apps",
+    platform: platform(),
+    count: tasks.length,
+    tasks
+  };
+}
+
+export async function removeWindowsAutostart(payload: CommandPayload): Promise<Record<string, unknown>> {
+  assertWindows();
+  const taskName = optionalPayloadString(payload, "taskName");
+  if (!taskName) {
+    throw new Error("Nome da tarefa nao informado.");
+  }
+  if (!taskName.startsWith(AUTOSTART_TASK_PREFIX)) {
+    throw new Error("So e permitido remover tarefas criadas pelo Radio BOT.");
+  }
+
+  const result = await runPowerShellJson<RemoveAutostartScriptResult>(
+    REMOVE_AUTOSTART_SCRIPT,
+    {
+      RADIO_BOT_AUTOSTART_TASK: taskName
+    },
+    15000
+  );
+
+  return {
+    action: "remove_autostart_app",
+    removed: result.removed === true,
+    platform: platform(),
+    taskName: stringOrNull(result.taskName) ?? taskName
   };
 }
 
@@ -476,6 +581,37 @@ function normalizeCandidates(rawCandidates: unknown[]): ExecutableCandidate[] {
   }
 
   return candidates.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function normalizeAutostartEntries(rawTasks: unknown[]): AutostartEntry[] {
+  const seen = new Set<string>();
+  const entries: AutostartEntry[] = [];
+
+  for (const raw of rawTasks) {
+    if (!raw || typeof raw !== "object") {
+      continue;
+    }
+
+    const taskName = stringOrNull((raw as Record<string, unknown>).taskName);
+    if (!taskName || !taskName.startsWith(AUTOSTART_TASK_PREFIX)) {
+      continue;
+    }
+
+    const key = taskName.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+
+    entries.push({
+      taskName,
+      path: stringOrNull((raw as Record<string, unknown>).path),
+      workingDir: stringOrNull((raw as Record<string, unknown>).workingDir),
+      state: stringOrNull((raw as Record<string, unknown>).state)
+    });
+  }
+
+  return entries.sort((left, right) => left.taskName.localeCompare(right.taskName));
 }
 
 function optionalPayloadString(payload: CommandPayload, key: string): string | null {

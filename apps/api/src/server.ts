@@ -91,7 +91,9 @@ const profileOptionalActions = new Set<CommandAction>([
   "get_state",
   "shutdown",
   "discover_executables",
-  "configure_autostart_app"
+  "configure_autostart_app",
+  "list_autostart_apps",
+  "remove_autostart_app"
 ]);
 
 function commandRequiresProfile(action: CommandAction): boolean {

@@ -4,7 +4,12 @@ import { promisify } from "node:util";
 import { chromium, type BrowserContext, type Frame, type Page } from "playwright";
 import type { AgentBrowserState, AgentCommand, SiteProfile, SitePrompt } from "@radio-bot/shared";
 import type { AgentConfig } from "./config.js";
-import { configureWindowsAutostart, discoverWindowsExecutables } from "./windows-apps.js";
+import {
+  configureWindowsAutostart,
+  discoverWindowsExecutables,
+  listWindowsAutostart,
+  removeWindowsAutostart
+} from "./windows-apps.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -49,6 +54,20 @@ export class BrowserController {
     if (command.action === "configure_autostart_app") {
       return {
         output: await configureWindowsAutostart(command.payload),
+        state: await this.getState()
+      };
+    }
+
+    if (command.action === "list_autostart_apps") {
+      return {
+        output: await listWindowsAutostart(command.payload),
+        state: await this.getState()
+      };
+    }
+
+    if (command.action === "remove_autostart_app") {
+      return {
+        output: await removeWindowsAutostart(command.payload),
         state: await this.getState()
       };
     }

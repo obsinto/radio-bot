@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import type {
   ApiError,
+  AutostartEntry,
   CommandAction,
   CommandRecord,
   ConfirmationPrompt,
@@ -73,7 +74,9 @@ const actionLabels: Record<CommandAction, string> = {
   shutdown: "Desligar",
   power_on: "Ligar computador",
   discover_executables: "Buscar aplicativos",
-  configure_autostart_app: "Inicializar app"
+  configure_autostart_app: "Inicializar app",
+  list_autostart_apps: "Listar inicializacao",
+  remove_autostart_app: "Remover inicializacao"
 };
 
 function actionLabel(action: CommandAction): string {
@@ -1724,13 +1727,19 @@ function AutostartModal({
   const [query, setQuery] = useState("");
   const [manualPath, setManualPath] = useState("");
   const [candidates, setCandidates] = useState<ExecutableCandidate[]>([]);
+  const [autostartApps, setAutostartApps] = useState<AutostartEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [lastConfigured, setLastConfigured] = useState<string | null>(null);
 
   const online = device?.status === "online";
+  const deviceId = device?.id ?? null;
 
   async function runAgentCommand(
-    action: "discover_executables" | "configure_autostart_app",
+    action:
+      | "discover_executables"
+      | "configure_autostart_app"
+      | "list_autostart_apps"
+      | "remove_autostart_app",
     payload: Record<string, unknown>,
     timeoutMs: number
   ): Promise<CommandRecord> {
@@ -1799,12 +1808,50 @@ function AutostartModal({
       const taskName = outputString(command.output, "taskName") ?? "RadioBOT Autostart";
       setLastConfigured(taskName);
       onNotice(`Inicializacao configurada: ${taskName}.`, "success");
+      void loadAutostartApps();
     } catch (error) {
       onNotice(displayErrorMessage(error, "Nao foi possivel configurar a inicializacao."));
     } finally {
       setBusy(null);
     }
   }
+
+  async function loadAutostartApps() {
+    if (device?.status !== "online") {
+      setAutostartApps([]);
+      return;
+    }
+    try {
+      const command = await runAgentCommand("list_autostart_apps", {}, 35000);
+      setAutostartApps(readAutostartEntries(command.output?.tasks));
+    } catch (error) {
+      onNotice(displayErrorMessage(error, "Nao foi possivel listar a inicializacao."));
+    }
+  }
+
+  async function removeAutostart(taskName: string) {
+    setBusy(`remove:${taskName}`);
+    onNotice(null);
+    try {
+      await runAgentCommand("remove_autostart_app", { taskName }, 35000);
+      setAutostartApps((current) => current.filter((entry) => entry.taskName !== taskName));
+      if (lastConfigured === taskName) {
+        setLastConfigured(null);
+      }
+      onNotice(`Inicializacao removida: ${taskName}.`, "success");
+    } catch (error) {
+      onNotice(displayErrorMessage(error, "Nao foi possivel remover a inicializacao."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Carrega a lista de apps ja configurados ao abrir o modal ou trocar de
+  // computador online. Evita o aviso de dependencia faltando reusando o id.
+  useEffect(() => {
+    void loadAutostartApps();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deviceId, online]);
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -1892,6 +1939,37 @@ function AutostartModal({
 
         <div className="app-results">
           <div className="list-heading">
+            Apps na inicializacao
+            <span>{autostartApps.length}</span>
+          </div>
+          {autostartApps.length === 0 ? (
+            <p className="empty-state">
+              {online ? "Nenhum app configurado para iniciar." : "Agente offline."}
+            </p>
+          ) : (
+            autostartApps.map((entry) => (
+              <article className="app-result-row" key={entry.taskName}>
+                <div>
+                  <strong>{autostartDisplayName(entry)}</strong>
+                  <span>{entry.path ?? entry.taskName}</span>
+                  <em>{entry.state ? `Tarefa: ${entry.state}` : "Tarefa agendada"}</em>
+                </div>
+                <button
+                  className="small-action danger"
+                  type="button"
+                  disabled={!online || busy !== null}
+                  onClick={() => void removeAutostart(entry.taskName)}
+                >
+                  <Trash2 aria-hidden="true" />
+                  {busy === `remove:${entry.taskName}` ? "Removendo" : "Remover"}
+                </button>
+              </article>
+            ))
+          )}
+        </div>
+
+        <div className="app-results">
+          <div className="list-heading">
             Aplicativos encontrados
             <span>{candidates.length}</span>
           </div>
@@ -1966,6 +2044,40 @@ async function waitForCommandResult(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+const AUTOSTART_TASK_PREFIX = "RadioBOT Autostart";
+
+function autostartDisplayName(entry: AutostartEntry): string {
+  const stripped = entry.taskName
+    .replace(/^RadioBOT Autostart\s*-\s*/i, "")
+    .replace(/^RadioBOT Autostart\s*/i, "")
+    .trim();
+  return stripped.length > 0 ? stripped : entry.taskName;
+}
+
+function readAutostartEntries(value: unknown): AutostartEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+    const entry = item as Partial<AutostartEntry>;
+    if (typeof entry.taskName !== "string" || !entry.taskName.startsWith(AUTOSTART_TASK_PREFIX)) {
+      return [];
+    }
+    return [
+      {
+        taskName: entry.taskName,
+        path: typeof entry.path === "string" ? entry.path : null,
+        workingDir: typeof entry.workingDir === "string" ? entry.workingDir : null,
+        state: typeof entry.state === "string" ? entry.state : null
+      }
+    ];
+  });
 }
 
 function readExecutableCandidates(value: unknown): ExecutableCandidate[] {

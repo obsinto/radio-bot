@@ -11,7 +11,9 @@ export const COMMAND_ACTIONS = [
   "shutdown",
   "power_on",
   "discover_executables",
-  "configure_autostart_app"
+  "configure_autostart_app",
+  "list_autostart_apps",
+  "remove_autostart_app"
 ] as const;
 
 export type CommandAction = (typeof COMMAND_ACTIONS)[number];
@@ -86,6 +88,13 @@ export type ExecutableCandidate = {
   source: "start_menu" | "registry" | "common_path";
   publisher: string | null;
   version: string | null;
+};
+
+export type AutostartEntry = {
+  taskName: string;
+  path: string | null;
+  workingDir: string | null;
+  state: string | null;
 };
 
 export type CommandPayload = {

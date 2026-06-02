@@ -24,7 +24,7 @@ Quando recebe `play_radio` ou `stop_playback`, ele tenta controlar a pagina pelo
 - `screenshot` captura a area de trabalho inteira, nao apenas a aba do navegador.
 - `play_radio` e `stop_playback` tentam Chrome DevTools primeiro e depois teclas multimidia.
 - `click_action` nao e suportado neste agente.
-- `discover_executables` e `configure_autostart_app` (Inicializacao de aplicativo) sao suportados. Como o Windows 7 nao tem os cmdlets `*-ScheduledTask`, a tarefa de logon e criada com `schtasks.exe` a partir de um XML (schema 1.2), em vez de `Register-ScheduledTask`.
+- `discover_executables`, `configure_autostart_app`, `list_autostart_apps` e `remove_autostart_app` (Inicializacao de aplicativo) sao suportados. Como o Windows 7 nao tem os cmdlets `*-ScheduledTask`, a tarefa de logon e criada/removida com `schtasks.exe` (XML schema 1.2 e `/Delete`), em vez de `Register-ScheduledTask`/`Unregister-ScheduledTask`. So tarefas com prefixo `RadioBOT Autostart` podem ser removidas pelo painel.
 
 O objetivo desta versao e validar e operar o fluxo minimo: online/offline, abrir URL, capturar tela, tocar/parar por tecla de midia e desligamento.
 

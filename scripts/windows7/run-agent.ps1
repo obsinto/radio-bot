@@ -1399,6 +1399,83 @@ function Set-AppAutostart {
   }
 }
 
+function Get-AutostartApps {
+  $prefix = "RadioBOT Autostart"
+  $items = New-Object System.Collections.Generic.List[object]
+
+  # schtasks lista todas as tarefas visiveis ao usuario. Usamos o formato CSV
+  # sem cabecalho: a coluna 0 e o nome (\Pasta\Tarefa) e a coluna 2 e o status.
+  $rows = & schtasks.exe /Query /FO CSV /NH 2>$null
+  foreach ($row in @($rows)) {
+    if ([string]::IsNullOrWhiteSpace($row)) {
+      continue
+    }
+    $cols = $row -split '","'
+    if ($cols.Count -lt 1) {
+      continue
+    }
+    $taskNameRaw = $cols[0].TrimStart('"').Trim()
+    $status = if ($cols.Count -ge 3) { $cols[2].TrimEnd('"').Trim() } else { "" }
+    $leaf = $taskNameRaw.TrimStart('\')
+    if ($leaf -notlike "$prefix*") {
+      continue
+    }
+
+    $path = $null
+    $workingDir = $null
+    try {
+      $xmlText = (& schtasks.exe /Query /TN $taskNameRaw /XML ONE 2>$null) -join "`n"
+      if (-not [string]::IsNullOrWhiteSpace($xmlText)) {
+        [xml]$xml = $xmlText
+        $execPath = $xml.Task.Actions.Exec.Command
+        $execDir = $xml.Task.Actions.Exec.WorkingDirectory
+        if (-not [string]::IsNullOrWhiteSpace($execPath)) {
+          $path = [string]$execPath
+        }
+        if (-not [string]::IsNullOrWhiteSpace($execDir)) {
+          $workingDir = [string]$execDir
+        }
+      }
+    } catch {
+    }
+
+    $items.Add([pscustomobject]@{
+      taskName = $leaf
+      path = $path
+      workingDir = $workingDir
+      state = $status
+    }) | Out-Null
+  }
+
+  return @{ tasks = @($items) }
+}
+
+function Remove-AutostartApp {
+  param([string]$TaskName)
+
+  if ([string]::IsNullOrWhiteSpace($TaskName)) {
+    throw "Nome da tarefa nao informado."
+  }
+  $leaf = $TaskName.TrimStart('\').Trim()
+  if ($leaf -notlike "RadioBOT Autostart*") {
+    throw "So e permitido remover tarefas criadas pelo Radio BOT."
+  }
+
+  $deleteOutput = & schtasks.exe /Delete /TN $leaf /F 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    $detail = ($deleteOutput | Out-String).Trim()
+    throw "Falha ao remover tarefa (schtasks $LASTEXITCODE): $detail"
+  }
+
+  return @{
+    action = "remove_autostart_app"
+    removed = $true
+    platform = "win32"
+    taskName = $leaf
+    legacyMode = $true
+  }
+}
+
 function Invoke-LegacyCommand {
   param(
     [object]$Command,
@@ -1537,6 +1614,29 @@ function Invoke-LegacyCommand {
       $taskNameIn = [string](Get-PropertyValue -Object $payload -Name "taskName" -Default "")
       return @{
         output = Set-AppAutostart -ExePath $exePath -WorkingDir $workingDir -TaskName $taskNameIn -AppName $appName
+        state = Get-AgentState
+      }
+    }
+
+    "list_autostart_apps" {
+      $listing = Get-AutostartApps
+      $tasks = @($listing.tasks)
+      return @{
+        output = @{
+          action = "list_autostart_apps"
+          platform = "win32"
+          count = $tasks.Count
+          tasks = $tasks
+          legacyMode = $true
+        }
+        state = Get-AgentState
+      }
+    }
+
+    "remove_autostart_app" {
+      $taskName = [string](Get-PropertyValue -Object $payload -Name "taskName" -Default "")
+      return @{
+        output = Remove-AutostartApp -TaskName $taskName
         state = Get-AgentState
       }
     }
