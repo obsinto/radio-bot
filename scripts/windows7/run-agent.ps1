@@ -1402,53 +1402,82 @@ function Set-AppAutostart {
 function Get-AutostartApps {
   $prefix = "RadioBOT Autostart"
   $items = New-Object System.Collections.Generic.List[object]
+  $usedCom = $false
 
-  # Usamos a API COM Schedule.Service em vez de schtasks.exe: o schtasks do
-  # Windows 7 (sobretudo localizado) rejeita combinacoes como "/FO CSV /NH" e
-  # "/XML ONE" por tarefa. O COM existe no Win7, dispensa admin para as tarefas
-  # do usuario e entrega o XML e o estado de cada tarefa diretamente.
-  $service = New-Object -ComObject "Schedule.Service"
-  $service.Connect()
-  $folder = $service.GetFolder("\")
-  # 1 = TASK_ENUM_HIDDEN, para nao perder tarefas marcadas como ocultas.
-  $tasks = $folder.GetTasks(1)
+  # Primeiro tentamos a API COM Schedule.Service: ela entrega nome, XML (caminho
+  # do exe) e estado de cada tarefa. Em alguns Windows 7 o interop COM falha com
+  # "Os tipos de argumento nao correspondem", entao o bloco e tolerante a erro e
+  # caimos para um fallback via schtasks.
+  try {
+    $service = New-Object -ComObject "Schedule.Service"
+    $service.Connect()
+    $folder = $service.GetFolder("\")
+    $tasks = $folder.GetTasks(0)
 
-  foreach ($task in $tasks) {
-    $name = [string]$task.Name
-    if ($name -notlike "$prefix*") {
-      continue
-    }
-
-    $path = $null
-    $workingDir = $null
-    try {
-      [xml]$xml = $task.Xml
-      $execPath = $xml.Task.Actions.Exec.Command
-      $execDir = $xml.Task.Actions.Exec.WorkingDirectory
-      if (-not [string]::IsNullOrWhiteSpace($execPath)) {
-        $path = [string]$execPath
+    foreach ($task in $tasks) {
+      $name = [string]$task.Name
+      if ($name -notlike "$prefix*") {
+        continue
       }
-      if (-not [string]::IsNullOrWhiteSpace($execDir)) {
-        $workingDir = [string]$execDir
+
+      $path = $null
+      $workingDir = $null
+      try {
+        [xml]$xml = $task.Xml
+        $execPath = $xml.Task.Actions.Exec.Command
+        $execDir = $xml.Task.Actions.Exec.WorkingDirectory
+        if (-not [string]::IsNullOrWhiteSpace($execPath)) {
+          $path = [string]$execPath
+        }
+        if (-not [string]::IsNullOrWhiteSpace($execDir)) {
+          $workingDir = [string]$execDir
+        }
+      } catch {
       }
-    } catch {
+
+      # TASK_STATE: 0 Unknown, 1 Disabled, 2 Queued, 3 Ready, 4 Running.
+      $stateText = switch ([int]$task.State) {
+        1 { "Disabled" }
+        2 { "Queued" }
+        3 { "Ready" }
+        4 { "Running" }
+        default { "Unknown" }
+      }
+
+      $items.Add([pscustomobject]@{
+        taskName = $name
+        path = $path
+        workingDir = $workingDir
+        state = $stateText
+      }) | Out-Null
     }
 
-    # TASK_STATE: 0 Unknown, 1 Disabled, 2 Queued, 3 Ready, 4 Running.
-    $stateText = switch ([int]$task.State) {
-      1 { "Disabled" }
-      2 { "Queued" }
-      3 { "Ready" }
-      4 { "Running" }
-      default { "Unknown" }
-    }
+    $usedCom = $true
+  } catch {
+    Write-Log "Falha ao listar tarefas via COM: $($_.Exception.Message). Usando fallback schtasks."
+  }
 
-    $items.Add([pscustomobject]@{
-      taskName = $name
-      path = $path
-      workingDir = $workingDir
-      state = $stateText
-    }) | Out-Null
+  if (-not $usedCom) {
+    # Fallback independente de idioma: o caminho completo da tarefa
+    # (\RadioBOT Autostart - X) aparece como valor no /FO LIST. Extraimos por
+    # regex, sem depender do rotulo traduzido nem das flags /NH ou /XML.
+    $seen = @{}
+    $lines = & schtasks.exe /Query /FO LIST 2>$null
+    foreach ($line in @($lines)) {
+      $match = [regex]::Match([string]$line, '\\(RadioBOT Autostart[^\r\n]*?)\s*$')
+      if ($match.Success) {
+        $name = $match.Groups[1].Value.Trim()
+        if (-not $seen.ContainsKey($name)) {
+          $seen[$name] = $true
+          $items.Add([pscustomobject]@{
+            taskName = $name
+            path = $null
+            workingDir = $null
+            state = $null
+          }) | Out-Null
+        }
+      }
+    }
   }
 
   return @{ tasks = @($items) }
