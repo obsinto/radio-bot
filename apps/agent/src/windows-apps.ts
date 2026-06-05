@@ -263,10 +263,10 @@ if (-not [string]::IsNullOrWhiteSpace($query) -and $items.Count -lt $limit) {
 }
 
 $result = @($items | Select-Object -First $limit)
-[pscustomobject]@{
+ConvertTo-Json -InputObject @{
   candidates = $result
   truncated = ($items.Count -gt $limit)
-} | ConvertTo-Json -Depth 5 -Compress
+} -Depth 5 -Compress
 `;
 
 const CONFIGURE_AUTOSTART_SCRIPT = String.raw`
@@ -312,7 +312,7 @@ $userId = "$env:USERDOMAIN\$env:USERNAME"
 $action = New-ScheduledTaskAction -Execute $resolvedExe -WorkingDirectory $resolvedWorkingDir
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
-$principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel LeastPrivilege
+$principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
 
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Abre $appName automaticamente no logon pelo Radio BOT." -Force | Out-Null
 
@@ -351,9 +351,7 @@ Get-ScheduledTask -ErrorAction SilentlyContinue |
     }) | Out-Null
   }
 
-[pscustomobject]@{
-  tasks = @($items)
-} | ConvertTo-Json -Depth 5 -Compress
+ConvertTo-Json -InputObject @{ tasks = @($items) } -Depth 5 -Compress
 `;
 
 const REMOVE_AUTOSTART_SCRIPT = String.raw`

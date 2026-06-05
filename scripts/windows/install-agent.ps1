@@ -330,11 +330,14 @@ socket.on("error", (error) => {
 });
 '@
 
+  $scriptFile = Join-Path (Get-Location).Path ".radio-bot-websocket-check-$PID.mjs"
+
   try {
     $env:RADIO_BOT_TEST_SERVER_URL = $ServerUrl
     $env:RADIO_BOT_TEST_DEVICE_ID = $DeviceId
     $env:RADIO_BOT_TEST_DEVICE_TOKEN = $DeviceToken
-    & $Node "--input-type=module" "-e" $script
+    [IO.File]::WriteAllText($scriptFile, $script, (New-Object System.Text.UTF8Encoding $false))
+    & $Node $scriptFile
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
       if ($exitCode -in @(2, 4, 5)) {
@@ -346,6 +349,7 @@ socket.on("error", (error) => {
     Remove-Item Env:RADIO_BOT_TEST_SERVER_URL -ErrorAction SilentlyContinue
     Remove-Item Env:RADIO_BOT_TEST_DEVICE_ID -ErrorAction SilentlyContinue
     Remove-Item Env:RADIO_BOT_TEST_DEVICE_TOKEN -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $scriptFile -Force -ErrorAction SilentlyContinue
   }
 }
 
@@ -363,6 +367,46 @@ function Invoke-NativeCommand {
   }
 }
 
+function Test-ProjectRoot {
+  param([string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Container)) {
+    return $false
+  }
+
+  return (Test-Path -LiteralPath (Join-Path $Path "package.json") -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $Path "apps\agent\package.json") -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $Path "scripts\windows\run-agent.ps1") -PathType Leaf)
+}
+
+function Resolve-ProjectRoot {
+  param([string]$StartPath)
+
+  $current = (Resolve-Path $StartPath).Path
+  while (-not [string]::IsNullOrWhiteSpace($current)) {
+    if (Test-ProjectRoot -Path $current) {
+      return $current
+    }
+
+    $parent = Split-Path -Parent $current
+    if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {
+      break
+    }
+    $current = $parent
+  }
+
+  throw @"
+Nao encontrei a raiz do projeto Radio-BOT a partir de: $StartPath
+
+Execute este instalador dentro da pasta completa do projeto, por exemplo:
+
+  cd C:\RadioBOTInstaller\Radio-BOT
+  .\scripts\windows\install-agent.ps1
+
+Nao copie apenas install-agent.ps1; o instalador precisa de package.json, apps\agent e scripts\windows.
+"@
+}
+
 function Copy-Project {
   param(
     [string]$SourceRoot,
@@ -371,6 +415,10 @@ function Copy-Project {
 
   $source = (Resolve-Path $SourceRoot).Path.TrimEnd("\")
   $destination = (Resolve-Path $DestinationRoot).Path.TrimEnd("\")
+
+  if (-not (Test-ProjectRoot -Path $source)) {
+    throw "Pasta de origem invalida para o projeto Radio-BOT: $source"
+  }
 
   if ($source -ieq $destination) {
     return
@@ -420,7 +468,7 @@ $Npx = Resolve-NativeCommand `
 Invoke-NativeCommand -FilePath $Node -Arguments @("--version") -Step "Validando Node.js"
 Invoke-NativeCommand -FilePath $Npm -Arguments @("--version") -Step "Validando npm"
 
-$SourceRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$SourceRoot = Resolve-ProjectRoot -StartPath $PSScriptRoot
 $InstallDir = Read-RequiredText -Prompt "Pasta de instalacao" -Default $InstallDir
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $InstallDir = (Resolve-Path $InstallDir).Path
@@ -498,7 +546,7 @@ $Settings = New-ScheduledTaskSettingsSet `
 $Principal = New-ScheduledTaskPrincipal `
   -UserId $UserId `
   -LogonType Interactive `
-  -RunLevel LeastPrivilege
+  -RunLevel Limited
 
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask `

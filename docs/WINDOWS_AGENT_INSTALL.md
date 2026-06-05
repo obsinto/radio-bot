@@ -17,13 +17,15 @@ Motivo: o Chromium precisa ficar visivel para o operador local. Servicos do Wind
 
 ## Instalacao
 
-No PowerShell, dentro da pasta do projeto:
+No PowerShell, dentro da pasta completa do projeto Radio-BOT:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 
 .\scripts\windows\install-agent.ps1
 ```
+
+Se voce copiou os arquivos para o Windows, copie a pasta completa do projeto. Nao execute uma copia isolada de `install-agent.ps1`, porque o instalador precisa encontrar `package.json`, `apps\agent` e `scripts\windows`.
 
 O instalador vai perguntar, interativamente:
 
