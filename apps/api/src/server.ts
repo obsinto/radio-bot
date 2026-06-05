@@ -541,16 +541,16 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
   async function resumeRadioOnReconnect(input: {
     deviceId: string;
     reportedState?: Partial<AgentBrowserState> | null;
-  }): Promise<void> {
+  }): Promise<Awaited<ReturnType<typeof store.createCommand>> | null> {
     const device = await store.getDevice(input.deviceId);
     if (!device) {
-      return;
+      return null;
     }
 
     // Se o agente ja reporta uma radio ativa, ele nao reiniciou a reproducao:
     // nao reabrimos para nao interromper o que ja esta tocando.
     if (input.reportedState?.currentProfileId) {
-      return;
+      return null;
     }
 
     const recent = await store.listRecentCommands();
@@ -564,12 +564,13 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
         (command.status === "queued" || command.status === "sent")
     );
     if (hasPendingAgentCommand) {
-      return;
+      return null;
     }
 
     // Rádio a tocar: preferimos a selecionada no ultimo "ligar o PC" (power_on)
     // recente, que e a escolha explicita do usuario nesse boot. Caso contrario,
-    // a ultima radio que tocou (currentProfileId, preservado pelo `?? `).
+    // usamos a ultima radio registrada no estado do computador antes do agente
+    // voltar online.
     const RECENT_POWER_ON_MS = 15 * 60 * 1000;
     const recentPowerOnProfileId = deviceCommands
       .filter(
@@ -582,15 +583,15 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
 
     const profileId = recentPowerOnProfileId ?? device.currentProfileId;
     if (!profileId || !device.profileIds.includes(profileId)) {
-      return;
+      return null;
     }
 
     const profile = await store.getProfile(profileId);
     if (!profile) {
-      return;
+      return null;
     }
 
-    await store.createCommand({
+    return store.createCommand({
       action: profile.username && profile.password ? "login" : "open_site",
       profileId,
       deviceId: input.deviceId,
@@ -832,6 +833,97 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     });
   }, 30000);
   scheduleInterval.unref();
+
+  // Recuperacao automatica apos queda inesperada: se um computador com Wake on
+  // LAN configurado cair offline sem um "shutdown" nosso recente, enfileiramos
+  // um power_on. O comando fica na fila ate o gateway ESP voltar (ex.: quando a
+  // energia retorna) e a radio que estava tocando e restaurada na reconexao do
+  // agente. Dispensa o "restore on AC power loss" da BIOS.
+  async function runAutoRecovery(): Promise<void> {
+    const policy = config.autoRecover;
+    if (!policy.enabled) {
+      return;
+    }
+
+    const now = Date.now();
+    const devices = await store.listSafeDevices();
+    const candidates = devices.filter(
+      (device) =>
+        device.status === "offline" &&
+        !isDeviceConnected(device.id) &&
+        Boolean(device.macAddress) &&
+        Boolean(device.wolGatewayId) &&
+        Boolean(device.currentProfileId) &&
+        device.profileIds.includes(device.currentProfileId as string) &&
+        Boolean(device.lastSeenAt) &&
+        now - new Date(device.lastSeenAt as string).getTime() >= policy.graceMs
+    );
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const recentCommands = await store.listRecentCommands();
+
+    for (const device of candidates) {
+      if (!(await store.getWolGateway(device.wolGatewayId as string))) {
+        continue;
+      }
+
+      const offlineAt = new Date(device.lastSeenAt as string).getTime();
+      const deviceCommands = recentCommands.filter((command) => command.deviceId === device.id);
+
+      // Desligamento intencional: um "shutdown" nosso resolvido perto do momento
+      // em que o computador caiu. lastSeenAt fica congelado enquanto offline,
+      // entao essa checagem continua valida por toda a janela offline.
+      const intentionalShutdown = deviceCommands.some(
+        (command) =>
+          command.action === "shutdown" &&
+          (command.status === "succeeded" ||
+            command.status === "sent" ||
+            command.status === "running") &&
+          Math.abs(new Date(command.updatedAt).getTime() - offlineAt) <= policy.intentionalWindowMs
+      );
+      if (intentionalShutdown) {
+        continue;
+      }
+
+      // Dedup + backoff: nao reenfileira enquanto houver um power_on a caminho
+      // nem antes do intervalo de retry, evitando enxurrada de pacotes WOL.
+      const hasPendingOrRecentPowerOn = deviceCommands.some(
+        (command) =>
+          command.action === "power_on" &&
+          (command.status === "queued" ||
+            command.status === "sent" ||
+            command.status === "running" ||
+            now - new Date(command.createdAt).getTime() <= policy.backoffMs)
+      );
+      if (hasPendingOrRecentPowerOn) {
+        continue;
+      }
+
+      const command = await store.createCommand({
+        action: "power_on",
+        profileId: device.currentProfileId,
+        deviceId: device.id,
+        requestedBy: "system:auto-recover",
+        payload: { reason: "auto_recover" }
+      });
+      server.log.info(
+        { deviceId: device.id, commandId: command.id, profileId: device.currentProfileId },
+        "auto-recover: power_on enfileirado apos queda inesperada"
+      );
+    }
+  }
+
+  const autoRecoverInterval = setInterval(() => {
+    void runAutoRecovery().catch((error: unknown) => {
+      server.log.error(error);
+    });
+  }, 30000);
+  autoRecoverInterval.unref();
+  server.addHook("onClose", async () => {
+    clearInterval(autoRecoverInterval);
+  });
 
   server.decorateRequest("userEmail", null);
   server.addHook("preHandler", async (request, reply) => {
@@ -1570,9 +1662,6 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     const wasConnected = isLegacyAgentFresh(deviceId);
     legacyAgents.set(deviceId, Date.now());
     await store.markDeviceOnline(deviceId);
-    if (request.body?.state) {
-      await store.updateDeviceState(deviceId, request.body.state);
-    }
 
     if (!wasConnected) {
       // Reabre a ultima radio selecionada quando o computador volta a ligar.
@@ -1581,6 +1670,10 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
         deviceId,
         reportedState: request.body?.state ?? null
       });
+    }
+
+    if (request.body?.state) {
+      await store.updateDeviceState(deviceId, request.body.state);
     }
 
     const command = await store.reserveAgentCommand(deviceId);
@@ -1769,6 +1862,8 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
       deviceId
     });
 
+    let shouldResumeOnFirstHeartbeat = true;
+
     socket.on("message", (raw) => {
       void (async () => {
         const message = parseAgentMessage(Buffer.isBuffer(raw) ? raw : Buffer.from(raw.toString()));
@@ -1778,6 +1873,22 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
 
         if (message.type === "heartbeat") {
           await store.markDeviceOnline(deviceId);
+          if (shouldResumeOnFirstHeartbeat) {
+            shouldResumeOnFirstHeartbeat = false;
+            const resumeCommand = await resumeRadioOnReconnect({
+              deviceId,
+              reportedState: message.state ?? null
+            });
+            if (resumeCommand) {
+              const resumeProfile = resumeCommand.profileId
+                ? await store.getProfile(resumeCommand.profileId)
+                : null;
+              await sendOrQueueAgentCommand({
+                command: resumeCommand,
+                profile: resumeProfile
+              });
+            }
+          }
           if (message.state) {
             await store.updateDeviceState(deviceId, message.state);
           }

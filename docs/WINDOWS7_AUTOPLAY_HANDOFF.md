@@ -200,7 +200,7 @@ Agora o backend (`apps/api/src/server.ts`, funcao `resumeRadioOnReconnect`) reab
 - No `/agent-legacy/poll`, detectamos a reconexao comparando com `isLegacyAgentFresh` ANTES de atualizar o timestamp (se o agente nao estava "fresco", o PC acabou de ligar / o agente reiniciou).
 - A radio escolhida segue esta ordem:
   1. o `profileId` do ultimo comando `power_on` (a radio que voce seleciona na tela "ligar o PC" por Wake on LAN), se criado nos ultimos 15 minutos;
-  2. senao, `device.currentProfileId` (a ultima radio que tocou; preservada porque `updateDeviceState` usa `?? `).
+  2. senao, `device.currentProfileId` (a ultima radio registrada pelo backend antes do agente voltar online).
 - O comando enfileirado e `login` (se o perfil tem usuario/senha) ou `open_site`, entregue ja no mesmo poll.
 
 Protecoes:
@@ -208,7 +208,9 @@ Protecoes:
 - So reabre se o agente reporta que NAO tem radio ativa (`state.currentProfileId` vazio). Se o agente reiniciou mas o Chrome continua tocando, ou foi so uma reconexao de rede, nada e reaberto.
 - Nao duplica se ja existe um comando de agente enfileirado/enviado para o dispositivo (o `power_on`, que vai para o gateway ESP32, nao conta).
 
-Isso vale para o agente legado Windows 7. O agente moderno (WebSocket) nao foi alterado.
+Isso vale para o agente legado Windows 7 e para o agente moderno (WebSocket). No agente moderno, a retomada acontece no primeiro `heartbeat` de uma conexao nova: se o navegador ainda reporta uma radio ativa, nada e reaberto; se o processo reiniciou e reporta estado vazio, o backend envia `login` ou `open_site`.
+
+A ordem do `/agent-legacy/poll` tambem precisa chamar `resumeRadioOnReconnect` antes de persistir o estado reportado no boot. Isso preserva a ultima radio salva no banco PostgreSQL tempo suficiente para criar o comando de retomada, mesmo quando o processo recem-iniciado envia `currentProfileId = null`.
 
 ## Como Atualizar a Maquina Windows 7
 

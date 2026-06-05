@@ -57,7 +57,28 @@ export type AppConfig = {
   profiles: SiteProfile[];
   devices: DeviceSeed[];
   wolGateways: WolGatewaySeed[];
+  autoRecover: AutoRecoverConfig;
 };
+
+export type AutoRecoverConfig = {
+  enabled: boolean;
+  graceMs: number;
+  backoffMs: number;
+  intentionalWindowMs: number;
+};
+
+function parseBooleanEnv(name: string, fallback: boolean): boolean {
+  const value = process.env[name];
+  if (value === undefined || value.trim() === "") {
+    return fallback;
+  }
+  return !["false", "0", "no", "off"].includes(value.trim().toLowerCase());
+}
+
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 export function loadConfig(): AppConfig {
   const profiles = parseJsonEnv<SiteProfile[]>("SITE_PROFILES_JSON") ?? [];
@@ -78,6 +99,12 @@ export function loadConfig(): AppConfig {
       "dev-only-change-this-encryption-key",
     profiles,
     devices,
-    wolGateways
+    wolGateways,
+    autoRecover: {
+      enabled: parseBooleanEnv("AUTO_RECOVER_ENABLED", true),
+      graceMs: parsePositiveIntEnv("AUTO_RECOVER_GRACE_MS", 90000),
+      backoffMs: parsePositiveIntEnv("AUTO_RECOVER_BACKOFF_MS", 300000),
+      intentionalWindowMs: parsePositiveIntEnv("AUTO_RECOVER_INTENTIONAL_WINDOW_MS", 900000)
+    }
   };
 }
