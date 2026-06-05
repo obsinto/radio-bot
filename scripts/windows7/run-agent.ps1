@@ -1050,6 +1050,24 @@ function ConvertTo-XmlText {
   return $Value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace('"', "&quot;")
 }
 
+function Invoke-SchtasksLegacy {
+  param([string[]]$Arguments)
+
+  $oldPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $output = & schtasks.exe @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $oldPreference
+  }
+
+  return @{
+    exitCode = $exitCode
+    output = @($output)
+  }
+}
+
 function Resolve-CandidatePath {
   param([string]$Path)
 
@@ -1367,10 +1385,10 @@ function Set-AppAutostart {
   # schtasks.exe espera o XML em UTF-16 (Unicode); gravamos com BOM.
   [IO.File]::WriteAllText($xmlPath, $xml, [Text.Encoding]::Unicode)
   try {
-    $createOutput = & schtasks.exe /Create /TN $TaskName /XML $xmlPath /F 2>&1
-    if ($LASTEXITCODE -ne 0) {
-      $detail = ($createOutput | Out-String).Trim()
-      throw "Falha ao registrar tarefa agendada (schtasks $LASTEXITCODE): $detail"
+    $createResult = Invoke-SchtasksLegacy -Arguments @("/Create", "/TN", $TaskName, "/XML", $xmlPath, "/F")
+    if ($createResult["exitCode"] -ne 0) {
+      $detail = ($createResult["output"] | Out-String).Trim()
+      throw "Falha ao registrar tarefa agendada (schtasks $($createResult['exitCode'])): $detail"
     }
   } finally {
     Remove-Item -LiteralPath $xmlPath -Force -ErrorAction SilentlyContinue
@@ -1378,10 +1396,12 @@ function Set-AppAutostart {
 
   $state = "Ready"
   try {
-    $query = & schtasks.exe /Query /TN $TaskName /FO LIST 2>$null
-    $statusLine = $query | Where-Object { $_ -match "^\s*Status:" } | Select-Object -First 1
-    if ($statusLine) {
-      $state = ($statusLine -replace "^\s*Status:\s*", "").Trim()
+    $queryResult = Invoke-SchtasksLegacy -Arguments @("/Query", "/TN", $TaskName, "/FO", "LIST")
+    if ($queryResult["exitCode"] -eq 0) {
+      $statusLine = $queryResult["output"] | Where-Object { $_ -match "^\s*Status:" } | Select-Object -First 1
+      if ($statusLine) {
+        $state = ($statusLine -replace "^\s*Status:\s*", "").Trim()
+      }
     }
   } catch {
   }
@@ -1400,27 +1420,45 @@ function Set-AppAutostart {
 }
 
 function Get-AutostartApps {
-  $items = New-Object System.Collections.Generic.List[object]
+  $items = @()
   $seen = @{}
 
-  # Listagem 100% via schtasks /FO LIST (formato padrao, SEM /NH e SEM /XML, que
-  # dao erro no Windows 7). Nao usamos a API COM Schedule.Service: em alguns Win7
-  # ela lanca "Os tipos de argumento nao correspondem" de um jeito que escapa do
-  # try/catch. O caminho completo da tarefa (\RadioBOT Autostart - X) aparece
-  # como valor no /FO LIST; extraimos o nome por regex, independente do idioma.
-  $lines = & schtasks.exe /Query /FO LIST 2>$null
+  # Listagem 100% via schtasks.exe, SEM /NH e SEM /XML, que dao erro no Windows
+  # 7. Nao usamos a API COM Schedule.Service: em alguns Win7 ela lanca "Os tipos
+  # de argumento nao correspondem". Tambem evitamos Generic.List/pscustomobject
+  # aqui para reduzir atrito com o Windows PowerShell legado.
+  $queryResult = Invoke-SchtasksLegacy -Arguments @("/Query", "/FO", "LIST")
+  $lines = $queryResult["output"]
+  if ($queryResult["exitCode"] -ne 0) {
+    $listDetail = ($lines | Out-String).Trim()
+    $queryResult = Invoke-SchtasksLegacy -Arguments @("/Query")
+    $lines = $queryResult["output"]
+    if ($queryResult["exitCode"] -ne 0) {
+      $defaultDetail = ($lines | Out-String).Trim()
+      throw "Falha ao listar tarefas (schtasks). FO LIST: $listDetail | padrao: $defaultDetail"
+    }
+  }
+
   foreach ($line in @($lines)) {
-    $match = [regex]::Match([string]$line, '\\(RadioBOT Autostart[^\r\n]*?)\s*$')
-    if ($match.Success) {
-      $name = $match.Groups[1].Value.Trim()
-      if (-not $seen.ContainsKey($name)) {
-        $seen[$name] = $true
-        $items.Add([pscustomobject]@{
+    $text = [string]$line
+    $name = $null
+
+    if ($text -match '\\(RadioBOT Autostart.*?)(?:\s{2,}|$)') {
+      $name = $Matches[1].Trim()
+    } elseif ($text -match '(?:^|[:\s])(RadioBOT Autostart.*?)(?:\s{2,}|$)') {
+      $name = $Matches[1].Trim()
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($name)) {
+      $key = $name.ToLowerInvariant()
+      if (-not $seen.Contains($key)) {
+        $seen[$key] = $true
+        $items += ,@{
           taskName = $name
           path = $null
           workingDir = $null
           state = $null
-        }) | Out-Null
+        }
       }
     }
   }
@@ -1434,15 +1472,18 @@ function Remove-AutostartApp {
   if ([string]::IsNullOrWhiteSpace($TaskName)) {
     throw "Nome da tarefa nao informado."
   }
-  $leaf = $TaskName.TrimStart('\').Trim()
+  $leaf = $TaskName.Trim()
+  while ($leaf.StartsWith('\')) {
+    $leaf = $leaf.Substring(1).Trim()
+  }
   if ($leaf -notlike "RadioBOT Autostart*") {
     throw "So e permitido remover tarefas criadas pelo Radio BOT."
   }
 
-  $deleteOutput = & schtasks.exe /Delete /TN $leaf /F 2>&1
-  if ($LASTEXITCODE -ne 0) {
-    $detail = ($deleteOutput | Out-String).Trim()
-    throw "Falha ao remover tarefa (schtasks $LASTEXITCODE): $detail"
+  $deleteResult = Invoke-SchtasksLegacy -Arguments @("/Delete", "/TN", $leaf, "/F")
+  if ($deleteResult["exitCode"] -ne 0) {
+    $detail = ($deleteResult["output"] | Out-String).Trim()
+    throw "Falha ao remover tarefa (schtasks $($deleteResult['exitCode'])): $detail"
   }
 
   return @{

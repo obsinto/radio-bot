@@ -28,7 +28,8 @@ de origem ja tem o marcador novo:
 
 --------------------------------------------------------
 PASSO 2 - COPIAR PARA A MAQUINA WINDOWS 7
---------------------------------------------------------
+-----------------------------------------------------
+---
 
 Copie a pasta inteira:
 
@@ -79,7 +80,21 @@ Agora DEVE mostrar a linha. Se mostrar, o agente foi atualizado.
 
 
 --------------------------------------------------------
-PASSO 6 - TESTAR NO PAINEL
+PASSO 6 - REINICIAR O AGENTE
+--------------------------------------------------------
+
+Encerre a execucao atual e inicie a tarefa novamente para carregar
+o run-agent.ps1 atualizado:
+
+  schtasks.exe /End /TN RadioBOTLegacyAgent
+  schtasks.exe /Run /TN RadioBOTLegacyAgent
+
+Se voce escolheu outro nome de tarefa no instalador, troque
+RadioBOTLegacyAgent pelo nome usado.
+
+
+--------------------------------------------------------
+PASSO 7 - TESTAR NO PAINEL
 --------------------------------------------------------
 
 Deixe o log aberto:
@@ -116,7 +131,8 @@ DIAGNOSTICO RAPIDO (copia e cola tudo de uma vez)
 Leitura do resultado:
   - origem com novo=False  -> a copia para a Win7 nao pegou. PASSO 2.
   - origem True e instalada False -> rode o instalador. PASSO 4.
-  - as duas True -> esta atualizado. Pode testar. PASSO 6.
+  - as duas True -> esta atualizado. Reinicie o agente no PASSO 6
+    e teste no painel no PASSO 7.
 
 
 --------------------------------------------------------
