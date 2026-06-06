@@ -1040,6 +1040,146 @@ function DevicesTab({
   );
 }
 
+type RadioMode = "same" | "per_device";
+
+type ScheduleGroup = {
+  key: string;
+  name: string;
+  kind: ScheduleKind;
+  timeOfDay: string;
+  timezone: string;
+  daysOfWeek: number[];
+  items: ScheduleRecord[];
+};
+
+function scheduleGroupKey(schedule: {
+  name: string;
+  kind: ScheduleKind;
+  timeOfDay: string;
+  timezone: string;
+  daysOfWeek: number[];
+}): string {
+  return [
+    schedule.name,
+    schedule.kind,
+    schedule.timeOfDay,
+    schedule.timezone,
+    [...schedule.daysOfWeek].sort((a, b) => a - b).join(",")
+  ].join(" ");
+}
+
+function groupSchedules(schedules: ScheduleRecord[]): ScheduleGroup[] {
+  const groups = new Map<string, ScheduleGroup>();
+  for (const schedule of schedules) {
+    const key = scheduleGroupKey(schedule);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.items.push(schedule);
+    } else {
+      groups.set(key, {
+        key,
+        name: schedule.name,
+        kind: schedule.kind,
+        timeOfDay: schedule.timeOfDay,
+        timezone: schedule.timezone,
+        daysOfWeek: schedule.daysOfWeek,
+        items: [schedule]
+      });
+    }
+  }
+  return [...groups.values()];
+}
+
+function Time24Field({
+  value,
+  onChange
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const [rawHour, rawMinute] = (value || "00:00").split(":");
+  const hour = (rawHour ?? "00").padStart(2, "0");
+  const minute = (rawMinute ?? "00").padStart(2, "0");
+  const hours = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, "0"));
+  const minutes = Array.from({ length: 60 }, (_, index) => String(index).padStart(2, "0"));
+  return (
+    <div className="time24">
+      <select aria-label="Hora" value={hour} onChange={(event) => onChange(`${event.target.value}:${minute}`)}>
+        {hours.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+      <span aria-hidden="true">:</span>
+      <select aria-label="Minuto" value={minute} onChange={(event) => onChange(`${hour}:${event.target.value}`)}>
+        {minutes.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// Calendario apenas de visualizacao: segunda a domingo.
+const calendarDays = [
+  { value: 1, label: "Segunda" },
+  { value: 2, label: "Terca" },
+  { value: 3, label: "Quarta" },
+  { value: 4, label: "Quinta" },
+  { value: 5, label: "Sexta" },
+  { value: 6, label: "Sabado" },
+  { value: 0, label: "Domingo" }
+];
+
+function WeekCalendar({
+  groups,
+  devices
+}: {
+  groups: ScheduleGroup[];
+  devices: SafeDevice[];
+}) {
+  return (
+    <div className="week-calendar">
+      {calendarDays.map((day) => {
+        const events = groups
+          .filter((group) => group.daysOfWeek.includes(day.value))
+          .sort((a, b) => a.timeOfDay.localeCompare(b.timeOfDay));
+        return (
+          <div className="week-day" key={day.value}>
+            <div className="week-day-head">{day.label}</div>
+            {events.length === 0 ? <span className="week-day-empty">—</span> : null}
+            {events.map((group) => {
+              const allDisabled = group.items.every((item) => item.status === "disabled");
+              const deviceNames = group.items
+                .map((item) => devices.find((device) => device.id === item.deviceId)?.name ?? item.deviceId)
+                .join(", ");
+              return (
+                <div
+                  className={`week-event ${group.kind === "shutdown" ? "shutdown" : ""} ${
+                    allDisabled ? "disabled" : ""
+                  }`}
+                  key={group.key}
+                  title={deviceNames}
+                >
+                  <span className="week-event-time">{group.timeOfDay}</span>
+                  <span className="week-event-name">{group.name}</span>
+                  <span className="week-event-meta">
+                    {group.kind === "power_on_start" ? "Ligar e tocar" : "Desligar"} ·{" "}
+                    {group.items.length} PC{group.items.length > 1 ? "s" : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SchedulesTab({
   token,
   schedules,
@@ -1059,22 +1199,53 @@ function SchedulesTab({
 }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<ScheduleKind>("power_on_start");
-  const [deviceId, setDeviceId] = useState(devices[0]?.id ?? "");
-  const [profileId, setProfileId] = useState(profiles[0]?.id ?? "");
+  const [deviceIds, setDeviceIds] = useState<string[]>(devices[0] ? [devices[0].id] : []);
+  const [radioMode, setRadioMode] = useState<RadioMode>("same");
+  const [sharedProfileId, setSharedProfileId] = useState("");
+  const [perDeviceProfile, setPerDeviceProfile] = useState<Record<string, string>>({});
   const [timeOfDay, setTimeOfDay] = useState("07:00");
   const [timezone, setTimezone] = useState("America/Sao_Paulo");
   const [daysOfWeek, setDaysOfWeek] = useState([1, 2, 3, 4, 5]);
   const [creating, setCreating] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editingItems, setEditingItems] = useState<Record<string, string>>({});
+  const [view, setView] = useState<"list" | "calendar">("list");
 
-  const selectedDevice = devices.find((device) => device.id === deviceId) ?? null;
-  const allowedProfiles = selectedDevice
-    ? profiles.filter((profile) => selectedDevice.profileIds.includes(profile.id))
-    : profiles;
-  const effectiveProfileId = allowedProfiles.some((profile) => profile.id === profileId)
-    ? profileId
-    : allowedProfiles[0]?.id ?? "";
+  const groups = groupSchedules(schedules);
+  const selectedDevices = devices.filter((device) => deviceIds.includes(device.id));
+
+  // "Mesma radio para todos": apenas radios vinculadas a TODOS os computadores escolhidos.
+  const sharedProfiles =
+    selectedDevices.length > 0
+      ? profiles.filter((profile) =>
+          selectedDevices.every((device) => device.profileIds.includes(profile.id))
+        )
+      : [];
+  const effectiveSharedProfileId = sharedProfiles.some((profile) => profile.id === sharedProfileId)
+    ? sharedProfileId
+    : sharedProfiles[0]?.id ?? "";
+
+  function profilesForDevice(deviceId: string): SafeSiteProfile[] {
+    const device = devices.find((item) => item.id === deviceId);
+    return device ? profiles.filter((profile) => device.profileIds.includes(profile.id)) : [];
+  }
+
+  function resolvedPerDeviceProfile(deviceId: string): string {
+    const allowed = profilesForDevice(deviceId);
+    const current = perDeviceProfile[deviceId];
+    if (current && allowed.some((profile) => profile.id === current)) {
+      return current;
+    }
+    return allowed[0]?.id ?? "";
+  }
+
+  function profileForSubmit(deviceId: string): string | null {
+    if (kind !== "power_on_start") {
+      return null;
+    }
+    return radioMode === "same" ? effectiveSharedProfileId || null : resolvedPerDeviceProfile(deviceId) || null;
+  }
 
   function toggleDay(day: number) {
     setDaysOfWeek((current) =>
@@ -1084,57 +1255,94 @@ function SchedulesTab({
     );
   }
 
+  function toggleDevice(id: string) {
+    setDeviceIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    );
+  }
+
   function clearScheduleForm() {
-    setEditingScheduleId(null);
+    setEditingKey(null);
+    setEditingItems({});
     setName("");
     setKind("power_on_start");
-    setDeviceId(devices[0]?.id ?? "");
-    setProfileId(profiles[0]?.id ?? "");
+    setDeviceIds(devices[0] ? [devices[0].id] : []);
+    setRadioMode("same");
+    setSharedProfileId("");
+    setPerDeviceProfile({});
     setTimeOfDay("07:00");
     setTimezone("America/Sao_Paulo");
     setDaysOfWeek([1, 2, 3, 4, 5]);
   }
 
-  function startScheduleEdit(schedule: ScheduleRecord) {
-    setEditingScheduleId(schedule.id);
-    setName(schedule.name);
-    setKind(schedule.kind);
-    setDeviceId(schedule.deviceId);
-    setProfileId(schedule.profileId ?? "");
-    setTimeOfDay(schedule.timeOfDay);
-    setTimezone(schedule.timezone);
-    setDaysOfWeek(schedule.daysOfWeek);
+  function startGroupEdit(group: ScheduleGroup) {
+    setEditingKey(group.key);
+    setName(group.name);
+    setKind(group.kind);
+    setDeviceIds(group.items.map((item) => item.deviceId));
+    setTimeOfDay(group.timeOfDay);
+    setTimezone(group.timezone);
+    setDaysOfWeek(group.daysOfWeek);
+
+    const idMap: Record<string, string> = {};
+    const profileMap: Record<string, string> = {};
+    for (const item of group.items) {
+      idMap[item.deviceId] = item.id;
+      if (item.profileId) {
+        profileMap[item.deviceId] = item.profileId;
+      }
+    }
+    setEditingItems(idMap);
+    setPerDeviceProfile(profileMap);
+
+    const distinctProfiles = new Set(group.items.map((item) => item.profileId).filter(Boolean));
+    if (group.kind === "power_on_start" && distinctProfiles.size <= 1) {
+      setRadioMode("same");
+      setSharedProfileId((distinctProfiles.values().next().value as string) ?? "");
+    } else {
+      setRadioMode(group.kind === "power_on_start" ? "per_device" : "same");
+      setSharedProfileId("");
+    }
   }
 
   async function submitSchedule(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (deviceIds.length === 0) {
+      onNotice("Selecione pelo menos um computador.");
+      return;
+    }
     setCreating(true);
     try {
-      const schedule = {
-        name,
-        kind,
-        deviceId,
-        profileId: kind === "power_on_start" ? effectiveProfileId : null,
-        timezone,
-        timeOfDay,
-        daysOfWeek
-      };
-      if (editingScheduleId) {
-        await updateSchedule({
-          token,
-          scheduleId: editingScheduleId,
-          schedule
-        });
-        onNotice("Agendamento atualizado.", "success");
-      } else {
-        await createSchedule({
-          token,
-          schedule: {
-            ...schedule,
-            status: "enabled"
+      const base = { name, kind, timezone, timeOfDay, daysOfWeek };
+      if (editingKey) {
+        for (const deviceId of deviceIds) {
+          const payload = { ...base, deviceId, profileId: profileForSubmit(deviceId) };
+          const existingId = editingItems[deviceId];
+          if (existingId) {
+            await updateSchedule({ token, scheduleId: existingId, schedule: payload });
+          } else {
+            await createSchedule({ token, schedule: { ...payload, status: "enabled" } });
           }
-        });
-        onNotice("Agendamento criado.", "success");
+        }
+        for (const [deviceId, scheduleId] of Object.entries(editingItems)) {
+          if (!deviceIds.includes(deviceId)) {
+            await deleteSchedule({ token, scheduleId });
+          }
+        }
+        onNotice("Agendamentos atualizados.", "success");
+      } else {
+        for (const deviceId of deviceIds) {
+          await createSchedule({
+            token,
+            schedule: { ...base, deviceId, profileId: profileForSubmit(deviceId), status: "enabled" }
+          });
+        }
+        onNotice(
+          deviceIds.length > 1
+            ? `${deviceIds.length} agendamentos criados.`
+            : "Agendamento criado.",
+          "success"
+        );
       }
       clearScheduleForm();
       await onRefresh();
@@ -1145,66 +1353,83 @@ function SchedulesTab({
     }
   }
 
-  async function toggleSchedule(schedule: ScheduleRecord) {
-    setBusyId(schedule.id);
+  async function toggleGroup(group: ScheduleGroup) {
+    const allEnabled = group.items.every((item) => item.status === "enabled");
+    const status = allEnabled ? "disabled" : "enabled";
+    setBusyKey(group.key);
     try {
-      await updateSchedule({
-        token,
-        scheduleId: schedule.id,
-        schedule: {
-          status: schedule.status === "enabled" ? "disabled" : "enabled"
-        }
-      });
+      for (const item of group.items) {
+        await updateSchedule({ token, scheduleId: item.id, schedule: { status } });
+      }
       await onRefresh();
     } catch (error) {
       onNotice((error as ApiError).message ?? "Nao foi possivel atualizar o agendamento.");
     } finally {
-      setBusyId(null);
+      setBusyKey(null);
     }
   }
 
-  async function runNow(scheduleId: string) {
-    setBusyId(scheduleId);
+  async function runGroupNow(group: ScheduleGroup) {
+    setBusyKey(group.key);
     try {
-      await runScheduleNow({ token, scheduleId });
+      for (const item of group.items) {
+        await runScheduleNow({ token, scheduleId: item.id });
+      }
       onNotice("Agendamento enviado para execucao.", "success");
       await onRefresh();
     } catch (error) {
       onNotice((error as ApiError).message ?? "Nao foi possivel executar agora.");
     } finally {
-      setBusyId(null);
+      setBusyKey(null);
     }
   }
 
-  async function remove(scheduleId: string) {
-    if (!window.confirm("Excluir este agendamento?")) {
+  async function removeGroup(group: ScheduleGroup) {
+    const message =
+      group.items.length > 1
+        ? `Excluir este agendamento de ${group.items.length} computadores?`
+        : "Excluir este agendamento?";
+    if (!window.confirm(message)) {
       return;
     }
-    setBusyId(scheduleId);
+    setBusyKey(group.key);
     try {
-      await deleteSchedule({ token, scheduleId });
+      for (const item of group.items) {
+        await deleteSchedule({ token, scheduleId: item.id });
+      }
       onNotice("Agendamento removido.", "success");
       await onRefresh();
     } catch (error) {
       onNotice((error as ApiError).message ?? "Nao foi possivel remover.");
     } finally {
-      setBusyId(null);
+      setBusyKey(null);
     }
   }
+
+  const missingRadioDevices =
+    kind === "power_on_start"
+      ? selectedDevices.filter((device) => profilesForDevice(device.id).length === 0)
+      : [];
+  const perDeviceReady =
+    kind !== "power_on_start" ||
+    (radioMode === "same"
+      ? Boolean(effectiveSharedProfileId)
+      : deviceIds.every((id) => Boolean(resolvedPerDeviceProfile(id))));
+  const canSubmit = !creating && deviceIds.length > 0 && perDeviceReady;
 
   return (
     <div className="tab-container">
       <form className="mini-form" onSubmit={submitSchedule}>
         <div className="form-heading">
           <div>
-            <strong>{editingScheduleId ? "Editar agendamento" : "Criar agendamento"}</strong>
+            <strong>{editingKey ? "Editar agendamento" : "Criar agendamento"}</strong>
             <span>
-              {editingScheduleId
-                ? "Salve computador, radio e horario desta rotina."
-                : "Cada agendamento escolhe computador, radio e horario."}
+              {editingKey
+                ? "Altere computadores, radio e horario desta rotina."
+                : "Selecione um ou varios computadores para criar a mesma rotina de uma vez."}
             </span>
           </div>
-          {editingScheduleId ? (
+          {editingKey ? (
             <button className="ghost-button compact-action" type="button" onClick={clearScheduleForm}>
               Cancelar
             </button>
@@ -1230,49 +1455,8 @@ function SchedulesTab({
             </select>
           </label>
           <label>
-            Computador
-            <select name="scheduleDeviceId" value={deviceId} onChange={(event) => setDeviceId(event.target.value)} required>
-              {devices.map((device) => (
-                <option key={device.id} value={device.id}>
-                  {device.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {kind === "power_on_start" ? (
-            <label>
-              Radio
-              <select
-                name="scheduleProfileId"
-                value={effectiveProfileId}
-                onChange={(event) => setProfileId(event.target.value)}
-                required
-              >
-                <option value="" disabled>
-                  Selecione a radio
-                </option>
-                {allowedProfiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.name}
-                  </option>
-                ))}
-              </select>
-              {selectedDevice && allowedProfiles.length === 0 ? (
-                <p className="field-note tone-warning">
-                  Vincule uma radio a este computador na aba Computadores.
-                </p>
-              ) : null}
-            </label>
-          ) : null}
-          <label>
             Horario
-            <input
-              required
-              type="time"
-              name="timeOfDay"
-              value={timeOfDay}
-              onChange={(event) => setTimeOfDay(event.target.value)}
-            />
+            <Time24Field value={timeOfDay} onChange={setTimeOfDay} />
           </label>
           <label>
             Timezone
@@ -1285,63 +1469,213 @@ function SchedulesTab({
           </label>
         </div>
 
-        <div className="day-picker" aria-label="Dias da semana">
-          {weekDays.map((day) => (
-            <label key={day.value} className={daysOfWeek.includes(day.value) ? "active" : ""}>
-              <input
-                type="checkbox"
-                name="daysOfWeek"
-                checked={daysOfWeek.includes(day.value)}
-                onChange={() => toggleDay(day.value)}
-              />
-              <span>{day.label}</span>
-            </label>
-          ))}
+        <div className="form-field-block">
+          <span className="block-label">Computadores ({deviceIds.length} selecionados)</span>
+          <div className="device-picker" aria-label="Computadores">
+            {devices.length === 0 ? (
+              <p className="field-note tone-warning">Cadastre um computador na aba Computadores.</p>
+            ) : null}
+            {devices.map((device) => (
+              <label key={device.id} className={deviceIds.includes(device.id) ? "active" : ""}>
+                <input
+                  type="checkbox"
+                  checked={deviceIds.includes(device.id)}
+                  onChange={() => toggleDevice(device.id)}
+                />
+                <span>{device.name}</span>
+              </label>
+            ))}
+          </div>
         </div>
 
-        <button
-          className="small-action form-submit"
-          type="submit"
-          disabled={creating || devices.length === 0 || (kind === "power_on_start" && !effectiveProfileId)}
-        >
+        {kind === "power_on_start" ? (
+          <div className="form-field-block">
+            <span className="block-label">Radio</span>
+            <div className="radio-mode-toggle" role="radiogroup" aria-label="Modo de radio">
+              <label className={radioMode === "same" ? "active" : ""}>
+                <input
+                  type="radio"
+                  name="radioMode"
+                  checked={radioMode === "same"}
+                  onChange={() => setRadioMode("same")}
+                />
+                <span>Mesma radio para todos</span>
+              </label>
+              <label className={radioMode === "per_device" ? "active" : ""}>
+                <input
+                  type="radio"
+                  name="radioMode"
+                  checked={radioMode === "per_device"}
+                  onChange={() => setRadioMode("per_device")}
+                />
+                <span>Escolher radio por computador</span>
+              </label>
+            </div>
+
+            {radioMode === "same" ? (
+              <label>
+                <select
+                  value={effectiveSharedProfileId}
+                  onChange={(event) => setSharedProfileId(event.target.value)}
+                  required
+                >
+                  <option value="" disabled>
+                    Selecione a radio
+                  </option>
+                  {sharedProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+                {selectedDevices.length > 0 && sharedProfiles.length === 0 ? (
+                  <p className="field-note tone-warning">
+                    Nenhuma radio esta vinculada a todos os computadores selecionados. Use "Escolher radio por
+                    computador" ou ajuste os vinculos na aba Computadores.
+                  </p>
+                ) : null}
+              </label>
+            ) : (
+              <div className="per-device-radios">
+                {selectedDevices.map((device) => {
+                  const allowed = profilesForDevice(device.id);
+                  return (
+                    <label key={device.id}>
+                      <span className="per-device-name">{device.name}</span>
+                      {allowed.length === 0 ? (
+                        <span className="field-note tone-warning">Sem radio vinculada.</span>
+                      ) : (
+                        <select
+                          value={resolvedPerDeviceProfile(device.id)}
+                          onChange={(event) =>
+                            setPerDeviceProfile((current) => ({
+                              ...current,
+                              [device.id]: event.target.value
+                            }))
+                          }
+                        >
+                          {allowed.map((profile) => (
+                            <option key={profile.id} value={profile.id}>
+                              {profile.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            {radioMode === "per_device" && missingRadioDevices.length > 0 ? (
+              <p className="field-note tone-warning">
+                Sem radio vinculada: {missingRadioDevices.map((device) => device.name).join(", ")}.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="form-field-block">
+          <span className="block-label">Dias da semana</span>
+          <div className="day-picker" aria-label="Dias da semana">
+            {weekDays.map((day) => (
+              <label key={day.value} className={daysOfWeek.includes(day.value) ? "active" : ""}>
+                <input
+                  type="checkbox"
+                  name="daysOfWeek"
+                  checked={daysOfWeek.includes(day.value)}
+                  onChange={() => toggleDay(day.value)}
+                />
+                <span>{day.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <button className="small-action form-submit" type="submit" disabled={!canSubmit}>
           <Plus aria-hidden="true" />
           {creating
-            ? editingScheduleId
+            ? editingKey
               ? "Salvando"
               : "Criando"
-            : editingScheduleId
+            : editingKey
               ? "Salvar agendamento"
-              : "Criar agendamento"}
+              : deviceIds.length > 1
+                ? `Criar para ${deviceIds.length} computadores`
+                : "Criar agendamento"}
         </button>
       </form>
 
+      <div className="schedule-view-toggle">
+        <button
+          type="button"
+          className={view === "list" ? "active" : ""}
+          onClick={() => setView("list")}
+        >
+          Lista
+        </button>
+        <button
+          type="button"
+          className={view === "calendar" ? "active" : ""}
+          onClick={() => setView("calendar")}
+        >
+          Calendario
+        </button>
+      </div>
+
+      {view === "calendar" ? (
+        groups.length === 0 ? (
+          <p className="empty-state">Nenhum agendamento cadastrado.</p>
+        ) : (
+          <WeekCalendar groups={groups} devices={devices} />
+        )
+      ) : (
       <div className="wol-grid">
-        {schedules.length === 0 ? <p className="empty-state">Nenhum agendamento cadastrado.</p> : null}
-        {schedules.map((schedule) => {
-          const device = devices.find((item) => item.id === schedule.deviceId);
-          const profile = profiles.find((item) => item.id === schedule.profileId);
-          const lastRun = runs.find((run) => run.scheduleId === schedule.id);
+        {groups.length === 0 ? <p className="empty-state">Nenhum agendamento cadastrado.</p> : null}
+        {groups.map((group) => {
+          const allEnabled = group.items.every((item) => item.status === "enabled");
+          const anyEnabled = group.items.some((item) => item.status === "enabled");
+          const statusLabel = allEnabled ? "Ativo" : anyEnabled ? "Parcial" : "Inativo";
+          const statusClass = allEnabled ? "enabled" : anyEnabled ? "partial" : "disabled";
+          const nextRunAt = group.items
+            .map((item) => item.nextRunAt)
+            .filter((value): value is string => Boolean(value))
+            .sort()[0] ?? null;
+          const lastRun = group.items
+            .map((item) => runs.find((run) => run.scheduleId === item.id))
+            .filter((run): run is DashboardState["scheduleRuns"][number] => Boolean(run))
+            .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))[0];
           return (
-            <article className="wol-row" key={schedule.id}>
+            <article className="wol-row" key={group.key}>
               <header>
-                <strong>{schedule.name}</strong>
-                <span className={`status-badge ${schedule.status}`}>
-                  {schedule.status === "enabled" ? "Ativo" : "Inativo"}
-                </span>
+                <strong>{group.name}</strong>
+                <span className={`status-badge ${statusClass}`}>{statusLabel}</span>
               </header>
               <p className="muted">
-                {schedule.kind === "power_on_start" ? "Ligar e tocar" : "Desligar"} -{" "}
-                {device?.name ?? schedule.deviceId}
-                {profile ? ` - ${profile.name}` : ""} - {schedule.timeOfDay}
+                {group.kind === "power_on_start" ? "Ligar e tocar" : "Desligar"} - {group.timeOfDay} -{" "}
+                {group.items.length} computador{group.items.length > 1 ? "es" : ""}
               </p>
+              <ul className="schedule-device-list">
+                {group.items.map((item) => {
+                  const device = devices.find((entry) => entry.id === item.deviceId);
+                  const profile = profiles.find((entry) => entry.id === item.profileId);
+                  return (
+                    <li key={item.id}>
+                      <span>{device?.name ?? item.deviceId}</span>
+                      {profile ? <span className="muted"> - {profile.name}</span> : null}
+                      {item.status === "disabled" ? <span className="muted"> (inativo)</span> : null}
+                    </li>
+                  );
+                })}
+              </ul>
               <p className="muted">
-                {schedule.daysOfWeek
+                {group.daysOfWeek
                   .map((day) => weekDays.find((item) => item.value === day)?.label)
                   .filter(Boolean)
                   .join(", ")}
               </p>
               <div className="schedule-meta">
-                <span>Proxima: {formatDateTime(schedule.nextRunAt)}</span>
+                <span>Proxima: {formatDateTime(nextRunAt)}</span>
                 <span>
                   Ultima: {lastRun ? `${lastRun.status} em ${formatDateTime(lastRun.startedAt)}` : "Nunca"}
                 </span>
@@ -1350,8 +1684,8 @@ function SchedulesTab({
                 <button
                   type="button"
                   className="ghost-button"
-                  disabled={busyId === schedule.id}
-                  onClick={() => startScheduleEdit(schedule)}
+                  disabled={busyKey === group.key}
+                  onClick={() => startGroupEdit(group)}
                 >
                   <Pencil aria-hidden="true" />
                   Editar
@@ -1359,16 +1693,16 @@ function SchedulesTab({
                 <button
                   type="button"
                   className="ghost-button"
-                  disabled={busyId === schedule.id}
-                  onClick={() => toggleSchedule(schedule)}
+                  disabled={busyKey === group.key}
+                  onClick={() => toggleGroup(group)}
                 >
-                  {schedule.status === "enabled" ? "Desativar" : "Ativar"}
+                  {allEnabled ? "Desativar" : "Ativar"}
                 </button>
                 <button
                   type="button"
                   className="small-action"
-                  disabled={busyId === schedule.id}
-                  onClick={() => runNow(schedule.id)}
+                  disabled={busyKey === group.key}
+                  onClick={() => runGroupNow(group)}
                 >
                   <Play aria-hidden="true" />
                   Executar agora
@@ -1376,8 +1710,8 @@ function SchedulesTab({
                 <button
                   type="button"
                   className="danger-button"
-                  disabled={busyId === schedule.id}
-                  onClick={() => remove(schedule.id)}
+                  disabled={busyKey === group.key}
+                  onClick={() => removeGroup(group)}
                 >
                   <Trash2 aria-hidden="true" />
                   Excluir
@@ -1387,6 +1721,7 @@ function SchedulesTab({
           );
         })}
       </div>
+      )}
     </div>
   );
 }
