@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CalendarClock,
   KeyRound,
@@ -1211,6 +1211,7 @@ function SchedulesTab({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editingItems, setEditingItems] = useState<Record<string, string>>({});
   const [view, setView] = useState<"list" | "calendar">("list");
+  const formRef = useRef<HTMLFormElement>(null);
 
   const groups = groupSchedules(schedules);
   const selectedDevices = devices.filter((device) => deviceIds.includes(device.id));
@@ -1303,6 +1304,13 @@ function SchedulesTab({
       setRadioMode(group.kind === "power_on_start" ? "per_device" : "same");
       setSharedProfileId("");
     }
+
+    if (view !== "list") {
+      setView("list");
+    }
+    requestAnimationFrame(() => {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   async function submitSchedule(event: React.FormEvent<HTMLFormElement>) {
@@ -1419,7 +1427,7 @@ function SchedulesTab({
 
   return (
     <div className="tab-container">
-      <form className="mini-form" onSubmit={submitSchedule}>
+      <form className="mini-form" ref={formRef} onSubmit={submitSchedule}>
         <div className="form-heading">
           <div>
             <strong>{editingKey ? "Editar agendamento" : "Criar agendamento"}</strong>
