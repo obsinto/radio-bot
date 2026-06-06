@@ -23,6 +23,7 @@ import {
 import type { AppConfig } from "./config.js";
 
 const WOL_GATEWAY_FRESH_MS = 45000;
+const WOL_COMMAND_LEASE_MS = 30000;
 
 export class AppStore {
   private adminEmail: string;
@@ -117,6 +118,30 @@ export class AppStore {
     return [...this.commands.values()]
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, 30);
+  }
+
+  listRecentCommandsForDevice(deviceId: string, limit = 30): CommandRecord[] {
+    return [...this.commands.values()]
+      .filter((command) => command.deviceId === deviceId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit);
+  }
+
+  listRecentPowerCommandsForDevice(deviceId: string, since: string): CommandRecord[] {
+    return [...this.commands.values()]
+      .filter(
+        (command) =>
+          command.deviceId === deviceId &&
+          (command.action === "shutdown" || command.action === "power_on") &&
+          (command.status === "queued" ||
+            command.status === "sent" ||
+            command.status === "running" ||
+            (command.action === "shutdown" &&
+              command.payload.intentionalShutdown === true &&
+              !command.payload.shutdownAuthorizationConsumedAt) ||
+            command.updatedAt >= since)
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   listSchedules(): ScheduleRecord[] {
@@ -494,7 +519,6 @@ export class AppStore {
     }
 
     device.status = "offline";
-    device.lastSeenAt = new Date().toISOString();
   }
 
   markWolGatewayOnline(gatewayId: string): WolGateway | null {
@@ -635,6 +659,73 @@ export class AppStore {
     return true;
   }
 
+  failInterruptedAgentCommands(deviceId: string): number {
+    let failed = 0;
+    for (const command of this.commands.values()) {
+      if (
+        command.deviceId !== deviceId ||
+        command.action === "power_on" ||
+        (command.status !== "sent" && command.status !== "running")
+      ) {
+        continue;
+      }
+
+      this.patchCommand(command.id, {
+        status: "failed",
+        error: "Execucao interrompida pela reconexao do agente."
+      });
+      failed += 1;
+    }
+    return failed;
+  }
+
+  consumeShutdownAuthorizations(deviceId: string): number {
+    let consumed = 0;
+    const now = Date.now();
+    const consumedAt = new Date(now).toISOString();
+    for (const command of this.commands.values()) {
+      const delaySeconds = Number(command.payload.delaySeconds ?? 60);
+      const delayMs =
+        Number.isFinite(delaySeconds) && delaySeconds > 0
+          ? delaySeconds * 1000
+          : 0;
+      if (
+        command.deviceId !== deviceId ||
+        command.action !== "shutdown" ||
+        command.payload.intentionalShutdown !== true ||
+        command.payload.shutdownAuthorizationConsumedAt ||
+        now - new Date(command.updatedAt).getTime() < delayMs
+      ) {
+        continue;
+      }
+
+      command.payload = {
+        ...command.payload,
+        shutdownAuthorizationConsumedAt: consumedAt
+      };
+      consumed += 1;
+    }
+    return consumed;
+  }
+
+  consumeShutdownAuthorization(commandId: string): boolean {
+    const command = this.commands.get(commandId);
+    if (
+      !command ||
+      command.action !== "shutdown" ||
+      command.payload.intentionalShutdown !== true ||
+      command.payload.shutdownAuthorizationConsumedAt
+    ) {
+      return false;
+    }
+
+    command.payload = {
+      ...command.payload,
+      shutdownAuthorizationConsumedAt: new Date().toISOString()
+    };
+    return true;
+  }
+
   updateDeviceWol(
     deviceId: string,
     update: {
@@ -669,9 +760,16 @@ export class AppStore {
     const commands = [...this.commands.values()].sort((a, b) =>
       a.createdAt.localeCompare(b.createdAt)
     );
+    const leaseExpiredBefore = Date.now() - WOL_COMMAND_LEASE_MS;
 
     for (const command of commands) {
-      if (command.action !== "power_on" || command.status !== "queued") {
+      const staleDelivery =
+        command.status === "sent" &&
+        new Date(command.updatedAt).getTime() <= leaseExpiredBefore;
+      if (
+        command.action !== "power_on" ||
+        (command.status !== "queued" && !staleDelivery)
+      ) {
         continue;
       }
 

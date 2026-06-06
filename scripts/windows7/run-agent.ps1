@@ -8,7 +8,7 @@ param(
   [int]$ChromeDebugPort = 9222,
   [string]$ChromeUserDataDir = "",
   [int]$PollSeconds = 5,
-  [string]$ShutdownDryRun = "true",
+  [string]$ShutdownDryRun = "false",
   [string]$LogFile = ""
 )
 
@@ -68,7 +68,7 @@ if ($PollSeconds -lt 2) {
   $PollSeconds = 2
 }
 if ($ShutdownDryRun -ne "true" -and $ShutdownDryRun -ne "false") {
-  $ShutdownDryRun = "true"
+  $ShutdownDryRun = "false"
 }
 
 if ([string]::IsNullOrWhiteSpace($LogFile)) {

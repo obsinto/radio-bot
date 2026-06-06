@@ -27,6 +27,7 @@ import type { AppConfig } from "./config.js";
 import { decryptSecret, encryptSecret, hashToken, safeEqual } from "./crypto.js";
 
 const WOL_GATEWAY_FRESH_MS = 45000;
+const WOL_COMMAND_LEASE_MS = 30000;
 
 type DeviceRow = QueryResultRow & {
   id: string;
@@ -222,6 +223,40 @@ export class PostgresStore {
   async listRecentCommands(): Promise<CommandRecord[]> {
     const result = await this.pool.query<CommandRow>(
       "SELECT * FROM commands ORDER BY created_at DESC LIMIT 30"
+    );
+    return result.rows.map((row) => this.commandFromRow(row));
+  }
+
+  async listRecentCommandsForDevice(deviceId: string, limit = 30): Promise<CommandRecord[]> {
+    const result = await this.pool.query<CommandRow>(
+      "SELECT * FROM commands WHERE device_id = $1 ORDER BY created_at DESC LIMIT $2",
+      [deviceId, limit]
+    );
+    return result.rows.map((row) => this.commandFromRow(row));
+  }
+
+  async listRecentPowerCommandsForDevice(
+    deviceId: string,
+    since: string
+  ): Promise<CommandRecord[]> {
+    const result = await this.pool.query<CommandRow>(
+      `
+        SELECT *
+        FROM commands
+        WHERE device_id = $1
+          AND action IN ('shutdown', 'power_on')
+          AND (
+            status IN ('queued', 'sent', 'running')
+            OR (
+              action = 'shutdown'
+              AND payload->>'intentionalShutdown' = 'true'
+              AND NOT (payload ? 'shutdownAuthorizationConsumedAt')
+            )
+            OR updated_at >= $2
+          )
+        ORDER BY updated_at DESC
+      `,
+      [deviceId, since]
     );
     return result.rows.map((row) => this.commandFromRow(row));
   }
@@ -783,7 +818,7 @@ export class PostgresStore {
     await this.pool.query(
       `
         UPDATE devices
-        SET status = 'offline', last_seen_at = NOW()
+        SET status = 'offline'
         WHERE id = $1
       `,
       [deviceId]
@@ -1020,6 +1055,63 @@ export class PostgresStore {
     return (update.rowCount ?? 0) > 0;
   }
 
+  async failInterruptedAgentCommands(deviceId: string): Promise<number> {
+    const update = await this.pool.query(
+      `
+        UPDATE commands
+        SET
+          status = 'failed',
+          error = 'Execucao interrompida pela reconexao do agente.',
+          updated_at = NOW()
+        WHERE device_id = $1
+          AND action <> 'power_on'
+          AND status IN ('sent', 'running')
+      `,
+      [deviceId]
+    );
+    return update.rowCount ?? 0;
+  }
+
+  async consumeShutdownAuthorizations(deviceId: string): Promise<number> {
+    const update = await this.pool.query(
+      `
+        UPDATE commands
+        SET payload = payload || jsonb_build_object(
+          'shutdownAuthorizationConsumedAt',
+          NOW()::text
+        )
+        WHERE device_id = $1
+          AND action = 'shutdown'
+          AND payload->>'intentionalShutdown' = 'true'
+          AND NOT (payload ? 'shutdownAuthorizationConsumedAt')
+          AND updated_at <= NOW() - (
+            COALESCE((payload->>'delaySeconds')::integer, 60) *
+            INTERVAL '1 second'
+          )
+      `,
+      [deviceId]
+    );
+    return update.rowCount ?? 0;
+  }
+
+  async consumeShutdownAuthorization(commandId: string): Promise<boolean> {
+    const update = await this.pool.query(
+      `
+        UPDATE commands
+        SET payload = payload || jsonb_build_object(
+          'shutdownAuthorizationConsumedAt',
+          NOW()::text
+        )
+        WHERE id = $1
+          AND action = 'shutdown'
+          AND payload->>'intentionalShutdown' = 'true'
+          AND NOT (payload ? 'shutdownAuthorizationConsumedAt')
+      `,
+      [commandId]
+    );
+    return (update.rowCount ?? 0) > 0;
+  }
+
   async updateDeviceWol(
     deviceId: string,
     update: {
@@ -1096,14 +1188,20 @@ export class PostgresStore {
           FROM commands c
           INNER JOIN devices d ON d.id = c.device_id
           WHERE c.action = 'power_on'
-            AND c.status = 'queued'
+            AND (
+              c.status = 'queued'
+              OR (
+                c.status = 'sent'
+                AND c.updated_at <= NOW() - ($2 * INTERVAL '1 millisecond')
+              )
+            )
             AND d.wol_gateway_id = $1
             AND d.mac_address IS NOT NULL
           ORDER BY c.created_at ASC
           LIMIT 1
           FOR UPDATE OF c SKIP LOCKED
         `,
-        [gatewayId]
+        [gatewayId, WOL_COMMAND_LEASE_MS]
       );
 
       const row = result.rows[0];
@@ -1310,9 +1408,15 @@ export class PostgresStore {
       ALTER TABLE commands ALTER COLUMN profile_id DROP NOT NULL;
     `);
 
-    await this.pool.query(
-      "UPDATE devices SET status = 'offline', current_profile_id = NULL, active_url = NULL, title = NULL"
-    );
+    await this.pool.query(`
+      UPDATE devices
+      SET status = 'offline'
+      WHERE status = 'online'
+        AND (
+          last_seen_at IS NULL
+          OR last_seen_at < NOW() - INTERVAL '2 minutes'
+        )
+    `);
   }
 
   private async seed(): Promise<void> {

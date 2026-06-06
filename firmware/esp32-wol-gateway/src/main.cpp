@@ -229,9 +229,9 @@ bool parseMac(const char* rawMac, uint8_t mac[6]) {
   return true;
 }
 
-bool sendWakeOnLan(const char* rawMac, const char* rawBroadcast) {
+size_t sendWakeOnLan(const char* rawMac, const char* rawBroadcast) {
   uint8_t mac[6];
-  if (!parseMac(rawMac, mac)) return false;
+  if (!parseMac(rawMac, mac)) return 0;
 
   IPAddress broadcastAddress(255, 255, 255, 255);
   if (rawBroadcast && rawBroadcast[0] != '\0') {
@@ -244,17 +244,26 @@ bool sendWakeOnLan(const char* rawMac, const char* rawBroadcast) {
   for (size_t i = 0; i < 16; i++) memcpy(packet + 6 + i * 6, mac, 6);
 
   udp.begin(WOL_PORT);
+  size_t packetsSent = 0;
   for (size_t i = 0; i < WOL_REPEAT_COUNT; i++) {
-    udp.beginPacket(broadcastAddress, WOL_PORT);
-    udp.write(packet, sizeof(packet));
-    udp.endPacket();
+    const bool packetStarted = udp.beginPacket(broadcastAddress, WOL_PORT) == 1;
+    const size_t bytesWritten = packetStarted ? udp.write(packet, sizeof(packet)) : 0;
+    const bool packetFinished = packetStarted && udp.endPacket() == 1;
+    if (bytesWritten == sizeof(packet) && packetFinished) {
+      packetsSent++;
+    }
     delay(100);
   }
-  Serial.printf("[wol] magic packet enviado para %s\n", rawMac);
-  return true;
+  Serial.printf(
+    "[wol] %u/%u magic packets enviados para %s\n",
+    static_cast<unsigned int>(packetsSent),
+    static_cast<unsigned int>(WOL_REPEAT_COUNT),
+    rawMac
+  );
+  return packetsSent;
 }
 
-void postCommandResult(const char* commandId, const char* status, const char* rawMac, const char* rawBroadcast, const char* errorMessage = nullptr) {
+void postCommandResult(const char* commandId, const char* status, const char* rawMac, const char* rawBroadcast, size_t packetsSent, const char* errorMessage = nullptr) {
   HTTPClient http;
   WiFiClient client;
   WiFiClientSecure secureClient;
@@ -276,7 +285,8 @@ void postCommandResult(const char* commandId, const char* status, const char* ra
   JsonObject output = doc["output"].to<JsonObject>();
   output["macAddress"] = rawMac;
   output["broadcastAddress"] = rawBroadcast ? rawBroadcast : "";
-  output["packetsSent"] = WOL_REPEAT_COUNT;
+  output["packetsSent"] = packetsSent;
+  output["packetsAttempted"] = WOL_REPEAT_COUNT;
   output["firmwareVersion"] = RADIO_BOT_VERSION;
 
   String body;
@@ -294,8 +304,15 @@ void handleWolCommand(JsonObject command) {
 
   if (commandId[0] == '\0' || macAddress[0] == '\0') return;
 
-  bool sent = sendWakeOnLan(macAddress, broadcastAddress);
-  postCommandResult(commandId, sent ? "succeeded" : "failed", macAddress, broadcastAddress, sent ? nullptr : "Erro ao enviar pacote.");
+  size_t packetsSent = sendWakeOnLan(macAddress, broadcastAddress);
+  postCommandResult(
+    commandId,
+    packetsSent > 0 ? "succeeded" : "failed",
+    macAddress,
+    broadcastAddress,
+    packetsSent,
+    packetsSent > 0 ? nullptr : "Erro ao enviar pacote."
+  );
 }
 
 void pollServer() {

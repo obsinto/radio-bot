@@ -42,7 +42,7 @@ Device ID do computador: cole o DEVICE_ID
 Device token: cole o DEVICE_TOKEN
 Caminho do Chrome: deixe vazio para detectar automaticamente ou informe o chrome.exe
 Nome da tarefa agendada: RadioBOTLegacyAgent
-Simular desligamento: sim
+Simular desligamento: nao
 Porta local do Chrome DevTools: 9222
 Intervalo de polling: 5
 ```

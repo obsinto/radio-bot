@@ -81,7 +81,7 @@ Por padrao:
 - Log: `C:\RadioBOTLegacy\agent.log`
 - Perfil Chrome: `C:\RadioBOTLegacy\chrome-profile`
 - Porta DevTools: `9222`
-- `SHUTDOWN_DRY_RUN=true`
+- `SHUTDOWN_DRY_RUN=false`
 - Polling: 5 segundos
 
 Quando o Chrome esta configurado, o agente abre o navegador com `--remote-debugging-port` e tenta executar o play/stop por Chrome DevTools antes de usar o fallback de teclas multimidia.
@@ -142,7 +142,9 @@ Teste primeiro:
 4. `Play`
 5. `Stop`
 
-Mantenha `SHUTDOWN_DRY_RUN=true` enquanto estiver validando. O comando `Desligar` vai retornar o comando que seria executado sem desligar a maquina.
+Use `SHUTDOWN_DRY_RUN=true` apenas durante um teste que nao pode desligar a
+maquina. Em producao, mantenha `false` para o painel e o scheduler desligarem o
+computador de fato.
 
 Para conferir se o play usou Chrome DevTools, veja o historico do comando no painel. O resultado deve incluir dados em `output.chrome`. Se aparecer `fallback=true`, o agente nao conseguiu controlar o Chrome pela porta local e usou teclas multimidia.
 

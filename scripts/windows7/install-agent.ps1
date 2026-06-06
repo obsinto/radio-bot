@@ -153,7 +153,7 @@ $DeviceId = Read-RequiredText -Prompt "Device ID do computador"
 $DeviceToken = Read-RequiredSecret -Prompt "Device token"
 $BrowserPath = Read-OptionalText -Prompt "Caminho do Chrome (ENTER para detectar automaticamente)" -Default (Resolve-ChromePath)
 $TaskName = Read-RequiredText -Prompt "Nome da tarefa agendada" -Default $TaskName
-$ShutdownDryRun = Read-BooleanString -Prompt "Simular desligamento do computador (SHUTDOWN_DRY_RUN)?" -Default "true"
+$ShutdownDryRun = Read-BooleanString -Prompt "Simular desligamento do computador (SHUTDOWN_DRY_RUN)?" -Default "false"
 
 $chromeDebugPortText = Read-OptionalText -Prompt "Porta local do Chrome DevTools" -Default "9222"
 $ChromeDebugPort = 9222

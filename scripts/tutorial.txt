@@ -1,92 +1,178 @@
-# Agente Legado Para Windows 7
+# Radio BOT - Comandos dos Agentes Windows
 
-Este agente existe para maquinas antigas em que o Wake-on-LAN so funciona bem mantendo Windows 7.
+Use o agente normal no Windows 10/11. Use o agente legado somente no Windows 7.
 
-Ele nao usa Node.js, npm nem Playwright. Em vez de WebSocket, ele faz polling HTTP na API e executa comandos basicos com PowerShell.
+## Reiniciar Rapidamente
 
-## Como Funciona
+### Windows 10/11
 
-O agente cria uma tarefa agendada no logon do usuario e executa `run-agent.ps1` em loop.
+```powershell
+Stop-ScheduledTask -TaskName RadioBOTAgent
+Start-ScheduledTask -TaskName RadioBOTAgent
+```
 
-No Chrome, ele abre a radio com:
+### Windows 7
+
+```powershell
+schtasks.exe /End /TN RadioBOTLegacyAgent
+schtasks.exe /Run /TN RadioBOTLegacyAgent
+```
+
+# Windows 10/11
+
+O agente normal usa Node.js, Playwright, Chromium persistente e WebSocket.
+
+## Pre-requisitos
+
+- Windows 10 ou 11.
+- Node.js LTS.
+- Projeto completo do Radio BOT.
+- Computador cadastrado com `DEVICE_ID` e `DEVICE_TOKEN`.
+- URL WebSocket da API, por exemplo `wss://radio-api.agilytech.com/agent`.
+
+## Instalar ou Atualizar
+
+Execute dentro da pasta completa do projeto:
+
+```powershell
+cd C:\RadioBOTInstaller\Radio-BOT
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\windows\install-agent.ps1
+```
+
+O comando abaixo e equivalente quando o projeto esta em
+`C:\RadioBOTInstaller\Radio-BOT`:
+
+```powershell
+cd C:\RadioBOTInstaller
+Set-ExecutionPolicy -Scope Process Bypass
+.\Radio-BOT\scripts\windows\install-agent.ps1
+```
+
+Tambem pode ser executado diretamente quando o PowerShell ja esta na raiz do
+projeto:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\windows\install-agent.ps1
+```
+
+Padroes:
+
+- Instalacao: `C:\RadioBOT`
+- Tarefa: `RadioBOTAgent`
+- Perfil Chromium: `C:\RadioBOT\browser-profile`
+- Log: `C:\RadioBOT\logs\agent.log`
+
+Para atualizar ou trocar o token, execute novamente o instalador. Ele copia o
+projeto, recria o `.env`, substitui a tarefa e inicia o agente.
+
+## Validar
+
+Ver estado da tarefa:
+
+```powershell
+Get-ScheduledTask -TaskName RadioBOTAgent | Format-List TaskName,State
+```
+
+Ver ultima execucao, proxima execucao e resultado:
+
+```powershell
+Get-ScheduledTaskInfo -TaskName RadioBOTAgent | Format-List *
+```
+
+Iniciar manualmente:
+
+```powershell
+Start-ScheduledTask -TaskName RadioBOTAgent
+```
+
+Acompanhar o log:
+
+```powershell
+Get-Content C:\RadioBOT\logs\agent.log -Tail 100 -Wait
+```
+
+O log deve mostrar:
+
+```text
+[agent] conectado como <device-id>
+```
+
+## Reiniciar
+
+```powershell
+Stop-ScheduledTask -TaskName RadioBOTAgent
+Start-ScheduledTask -TaskName RadioBOTAgent
+```
+
+## Desinstalar
+
+```powershell
+.\scripts\windows\uninstall-agent.ps1
+```
+
+Para remover tambem os arquivos:
+
+```powershell
+.\scripts\windows\uninstall-agent.ps1 -RemoveFiles
+```
+
+# Windows 7
+
+O agente legado nao usa Node.js, npm ou Playwright. Ele faz polling HTTP e
+controla o Chrome pela porta DevTools local. Se isso falhar, usa teclas
+multimidia.
+
+O Chrome e aberto com:
 
 ```text
 --remote-debugging-port=9222
 --user-data-dir=C:\RadioBOTLegacy\chrome-profile
 ```
 
-Quando recebe `play_radio` ou `stop_playback`, ele tenta controlar a pagina pelo Chrome DevTools local (`127.0.0.1:9222`), procurando botoes de play/stop e chamando `play()` ou `pause()` em elementos `audio`/`video`. Se isso falhar, usa teclas multimidia como fallback.
-
-## Limitacoes
-
-- Nao preenche login automaticamente.
-- Nao usa Playwright; o controle de pagina e limitado ao Chrome DevTools local.
-- `screenshot` captura a area de trabalho inteira, nao apenas a aba do navegador.
-- `play_radio` e `stop_playback` tentam Chrome DevTools primeiro e depois teclas multimidia.
-- `click_action`, `discover_executables` e `configure_autostart_app` nao sao suportados neste agente.
-
-O objetivo desta versao e validar e operar o fluxo minimo: online/offline, abrir URL, capturar tela, tocar/parar por tecla de midia e desligamento.
-
 ## Pre-requisitos
 
 - Windows 7 SP1.
-- PowerShell 3 ou superior. Recomendado: Windows Management Framework 5.1.
-- .NET Framework atualizado com TLS 1.2.
-- Chrome instalado. Se possivel, informe o caminho do `chrome.exe` no instalador.
-- Computador cadastrado no painel, com `DEVICE_ID` e `DEVICE_TOKEN`.
-- API publicada em HTTP/HTTPS acessivel pela maquina.
+- PowerShell 3 ou superior; recomendado WMF 5.1.
+- .NET Framework atualizado e TLS 1.2 habilitado.
+- Chrome instalado.
+- Computador cadastrado com `DEVICE_ID` e `DEVICE_TOKEN`.
+- API HTTP/HTTPS acessivel pela maquina.
 
-Se usar HTTPS em Windows 7, confirme que TLS 1.2 esta habilitado no sistema. Caso contrario, use HTTP apenas em uma rede privada/VPN de teste.
+## Instalar ou Atualizar
 
-## Instalacao
-
-Copie para o Windows 7 a pasta:
+Copie esta pasta:
 
 ```text
 scripts\windows7\
 ```
 
-Uma estrutura simples para pendrive ou copia local:
+Estrutura sugerida:
 
 ```text
 C:\RadioBOTInstaller\scripts\windows7\
 ```
 
-Abra o PowerShell:
+Execute:
 
 ```powershell
 cd C:\RadioBOTInstaller
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\windows7\install-agent.ps1
-.\Radio-BOT\scripts\windows\install-agent.ps1
 ```
 
-O instalador pergunta:
+Padroes:
 
-- URL da API, por exemplo `https://api.seu-dominio.com`.
-- `DEVICE_ID`.
-- `DEVICE_TOKEN`.
-- Caminho do Chrome, opcional se o instalador detectar automaticamente.
-- Nome da tarefa agendada.
-- Se o desligamento deve ser simulado.
-- Porta local do Chrome DevTools. Default: `9222`.
-- Intervalo de polling.
-
-Tambem e aceito colar a URL do agente moderno, como `wss://api.seu-dominio.com/agent`; o runner converte para `https://api.seu-dominio.com`.
-
-Por padrao:
-
-- Pasta: `C:\RadioBOTLegacy`
-- Tarefa Agendada: `RadioBOTLegacyAgent`
+- Instalacao: `C:\RadioBOTLegacy`
+- Tarefa: `RadioBOTLegacyAgent`
 - Log: `C:\RadioBOTLegacy\agent.log`
 - Perfil Chrome: `C:\RadioBOTLegacy\chrome-profile`
 - Porta DevTools: `9222`
-- `SHUTDOWN_DRY_RUN=true`
 - Polling: 5 segundos
+- `SHUTDOWN_DRY_RUN=false`
 
-Quando o Chrome esta configurado, o agente abre o navegador com `--remote-debugging-port` e tenta executar o play/stop por Chrome DevTools antes de usar o fallback de teclas multimidia.
-
-## Respostas Recomendadas
+Respostas recomendadas:
 
 ```text
 Pasta de instalacao: C:\RadioBOTLegacy
@@ -107,25 +193,37 @@ C:\Program Files\Google\Chrome\Application\chrome.exe
 C:\Program Files (x86)\Google\Chrome\Application\chrome.exe
 ```
 
-Use a URL da API, nao a URL do painel, e nao precisa colocar `/agent`.
+Para atualizar, copie novamente `scripts\windows7\` e execute o instalador. Ele
+para a tarefa antiga, atualiza `run-agent.ps1`, recria `agent.config.ps1` e
+inicia o agente.
 
-## Validacao
+## Validar
 
-Confira a tarefa:
+Ver estado resumido:
 
 ```powershell
 schtasks.exe /Query /TN RadioBOTLegacyAgent
 ```
 
-Acompanhe os logs:
+Ver estado detalhado, ultima execucao e resultado:
 
 ```powershell
-Get-Content C:\RadioBOTLegacy\agent.log -Tail 80 -Wait
+schtasks.exe /Query /TN RadioBOTLegacyAgent /V /FO LIST
 ```
 
-No painel, o computador deve aparecer online alguns segundos depois.
+Iniciar manualmente:
 
-Teste primeiro:
+```powershell
+schtasks.exe /Run /TN RadioBOTLegacyAgent
+```
+
+Acompanhar o log:
+
+```powershell
+Get-Content C:\RadioBOTLegacy\agent.log -Tail 100 -Wait
+```
+
+No painel, teste nesta ordem:
 
 1. `Estado`
 2. `Captura de tela`
@@ -133,50 +231,31 @@ Teste primeiro:
 4. `Play`
 5. `Stop`
 
-Mantenha `SHUTDOWN_DRY_RUN=true` enquanto estiver validando. O comando `Desligar` vai retornar o comando que seria executado sem desligar a maquina.
-
-Para conferir se o play usou Chrome DevTools, veja o historico do comando no painel. O resultado deve incluir dados em `output.chrome`. Se aparecer `fallback=true`, o agente nao conseguiu controlar o Chrome pela porta local e usou teclas multimidia.
-
-## Atualizacao
-
-Se voce ja instalou uma versao anterior:
-
-1. Copie novamente a pasta `scripts\windows7\` atualizada para `C:\RadioBOTInstaller\scripts\windows7\`.
-2. Rode o instalador de novo:
-
-```powershell
-cd C:\RadioBOTInstaller
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\windows7\install-agent.ps1
-```
-
-O instalador para a tarefa antiga, copia o novo `run-agent.ps1`, recria `agent.config.ps1` e inicia a tarefa novamente.
-
-## Troubleshooting
-
-Se o computador fica offline:
-
-```powershell
-Get-Content C:\RadioBOTLegacy\agent.log -Tail 80 -Wait
-```
-
-Confira `DEVICE_ID`, `DEVICE_TOKEN` e URL da API.
-
-Se abre a radio, mas nao toca:
-
-1. Confirme que o caminho informado e o `chrome.exe`.
-2. Mantenha a porta `9222`.
-3. Feche janelas antigas do Chrome abertas manualmente, ou reinicie a tarefa.
-4. Teste `Abrir e tocar` antes de testar somente `Play`.
-
-Para reiniciar:
+## Reiniciar
 
 ```powershell
 schtasks.exe /End /TN RadioBOTLegacyAgent
 schtasks.exe /Run /TN RadioBOTLegacyAgent
 ```
 
-## Desinstalacao
+## Diagnosticar Autoplay
+
+```powershell
+cd C:\RadioBOTInstaller/scripts/windows7
+Set-ExecutionPolicy -Scope Process Bypass
+.\diagnose-autoplay.ps1
+```
+
+Para acompanhar o problema enquanto ele ocorre:
+
+```powershell
+Get-Content C:\RadioBOTLegacy\agent.log -Tail 80 -Wait
+```
+
+Confirme o caminho do `chrome.exe`, mantenha a porta `9222` e feche instancias
+antigas do Chrome antes de reiniciar a tarefa.
+
+## Desinstalar
 
 ```powershell
 .\scripts\windows7\uninstall-agent.ps1
@@ -188,23 +267,26 @@ Para remover tambem `C:\RadioBOTLegacy`:
 .\scripts\windows7\uninstall-agent.ps1 -RemoveFiles
 ```
 
-## Quando Usar o Agente Normal
+## Referencia de Configuracao
 
-Use `scripts/windows/install-agent.ps1` em Windows 10/11. Ele continua sendo o agente completo, com Playwright, Chromium persistente e automacao de pagina.
+Use a URL da API, nao a URL do painel:
 
-Use este agente legado apenas quando a maquina precisa permanecer em Windows 7 por causa de Wake-on-LAN ou hardware antigo.
-
-
-cd C:\RadioBOTInstaller/scripts/windows7
-Set-ExecutionPolicy -Scope Process Bypass
-.\diagnose-autoplay.ps1
-
-cd C:\RadioBOTInstaller
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\windows7\install-agent.ps1
-
-
+```text
 https://radio-api.agilytech.com
+```
 
+```text
 DEVICE_ID=seu-device-id
 DEVICE_TOKEN=seu-device-token
+```
+
+O agente legado tambem aceita uma URL como
+`wss://api.seu-dominio.com/agent` e converte para HTTPS.
+
+## Limitacoes do Windows 7
+
+- Nao preenche login automaticamente.
+- A captura de tela inclui a area de trabalho inteira.
+- O controle da pagina depende do Chrome DevTools em `127.0.0.1:9222`.
+- Use `SHUTDOWN_DRY_RUN=true` apenas para testar sem desligar. Em producao,
+  mantenha `false` para o botao `Desligar` e o scheduler funcionarem de fato.

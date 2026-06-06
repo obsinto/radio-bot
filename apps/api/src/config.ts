@@ -65,6 +65,7 @@ export type AutoRecoverConfig = {
   graceMs: number;
   backoffMs: number;
   intentionalWindowMs: number;
+  scanIntervalMs?: number;
 };
 
 function parseBooleanEnv(name: string, fallback: boolean): boolean {
@@ -104,7 +105,8 @@ export function loadConfig(): AppConfig {
       enabled: parseBooleanEnv("AUTO_RECOVER_ENABLED", true),
       graceMs: parsePositiveIntEnv("AUTO_RECOVER_GRACE_MS", 90000),
       backoffMs: parsePositiveIntEnv("AUTO_RECOVER_BACKOFF_MS", 300000),
-      intentionalWindowMs: parsePositiveIntEnv("AUTO_RECOVER_INTENTIONAL_WINDOW_MS", 900000)
+      intentionalWindowMs: parsePositiveIntEnv("AUTO_RECOVER_INTENTIONAL_WINDOW_MS", 900000),
+      scanIntervalMs: parsePositiveIntEnv("AUTO_RECOVER_SCAN_INTERVAL_MS", 30000)
     }
   };
 }

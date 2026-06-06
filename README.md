@@ -152,6 +152,14 @@ WOL_GATEWAYS_JSON=[]
 
 O computador precisa ter Wake-on-LAN habilitado na BIOS/UEFI e no sistema operacional. Use cabo Ethernet sempre que possivel; WOL por Wi-Fi costuma ser limitado.
 
+### Recuperacao apos desligamento abrupto
+
+Com `AUTO_RECOVER_ENABLED=true`, a API considera autorizado somente um comando
+`Desligar` confirmado pelo agente e originado no painel ou scheduler. Se o
+heartbeat desaparecer por outro motivo, ela enfileira `power_on` apos a carencia
+configurada. Comandos entregues ao ESP32 sem confirmacao voltam a ser entregues,
+evitando que uma falha HTTP deixe o WOL permanentemente travado em `sent`.
+
 ## Instalacao do Agente
 
 Linux:

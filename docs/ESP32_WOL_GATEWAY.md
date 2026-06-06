@@ -114,6 +114,10 @@ platformio device monitor
   - autentica com o mesmo token;
   - registra sucesso ou falha do envio do magic packet.
 
+Se a confirmacao HTTP nao chegar a API, o mesmo comando volta a ser entregue
+depois do lease. O reenvio e intencional: pacotes WOL duplicados sao seguros e
+evitam que uma queda de rede deixe o computador desligado indefinidamente.
+
 ## Checklist Do PC
 
 - Wake-on-LAN ativo na BIOS/UEFI.
