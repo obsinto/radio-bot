@@ -36,6 +36,14 @@ type ClickResult = {
   frameUrl: string | null;
 };
 
+type ClickOptions = {
+  excludedSvgPathPrefixes?: string[];
+};
+
+const PLAYER_PLAY_ICON_PATH_PREFIX = "M5 5.27386C5 3.56701";
+const PLAYER_PAUSE_ICON_PATH_PREFIX = "M5.74512 3C4.77862";
+const PLAYER_MIC_ICON_PATH_PREFIX = "M176 352c53.02 0 96-42.98 96-96V96";
+
 export class BrowserController {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
@@ -404,8 +412,7 @@ export class BrowserController {
   private async playCurrentPage(profile: SiteProfile, currentPage?: Page): Promise<Record<string, unknown>> {
     const page = currentPage ?? (await this.ensurePage(profile));
     const selectors = this.actionSelectors(profile, "play", [
-      "#ap-toggle",
-      ".play-btn",
+      `button:has(svg[viewBox="0 0 24 24"] path[d^="${PLAYER_PLAY_ICON_PATH_PREFIX}"])`,
       'button[aria-label*="play" i]',
       '[role="button"][aria-label*="play" i]',
       'button[aria-label*="iniciar" i]',
@@ -424,7 +431,9 @@ export class BrowserController {
       'button:has-text("Tocar")',
       'a:has-text("Tocar")',
       ".btn-play",
-      ".play"
+      ".play",
+      "#ap-toggle",
+      ".play-btn"
     ]);
 
     const promptClicked = await this.clickPlayerStartPrompt(page);
@@ -440,7 +449,9 @@ export class BrowserController {
     };
 
     if (!promptClicked.clicked || media.playing === 0) {
-      clicked = await this.clickFirstInFrames(page, selectors);
+      clicked = await this.clickFirstInFrames(page, selectors, {
+        excludedSvgPathPrefixes: [PLAYER_MIC_ICON_PATH_PREFIX]
+      });
     }
     if (clicked.clicked) {
       await page.waitForTimeout(1000);
@@ -470,8 +481,7 @@ export class BrowserController {
     }
 
     const selectors = this.actionSelectors(profile, "stop", [
-      "#ap-toggle",
-      ".play-btn",
+      `button:has(svg[viewBox="0 0 24 24"] path[d^="${PLAYER_PAUSE_ICON_PATH_PREFIX}"])`,
       'button[aria-label*="pause" i]',
       '[role="button"][aria-label*="pause" i]',
       '[title*="pause" i]',
@@ -485,10 +495,14 @@ export class BrowserController {
       ".btn-pause",
       ".pause",
       ".btn-stop",
-      ".stop"
+      ".stop",
+      "#ap-toggle",
+      ".play-btn"
     ]);
 
-    const clicked = await this.clickFirstInFrames(page, selectors);
+    const clicked = await this.clickFirstInFrames(page, selectors, {
+      excludedSvgPathPrefixes: [PLAYER_MIC_ICON_PATH_PREFIX]
+    });
     if (clicked.clicked) {
       await page.waitForTimeout(500);
     }
@@ -613,10 +627,11 @@ export class BrowserController {
 
   private async clickFirstInFrames(
     page: Page,
-    selectors: string[]
+    selectors: string[],
+    options: ClickOptions = {}
   ): Promise<ClickResult> {
     for (const frame of page.frames()) {
-      const selector = await this.clickFirstSelector(frame, selectors);
+      const selector = await this.clickFirstSelector(frame, selectors, options);
       if (selector) {
         return {
           clicked: true,
@@ -633,18 +648,50 @@ export class BrowserController {
     };
   }
 
-  private async clickFirstSelector(scope: LocatorScope, selectors: string[]): Promise<string | null> {
+  private async clickFirstSelector(
+    scope: LocatorScope,
+    selectors: string[],
+    options: ClickOptions = {}
+  ): Promise<string | null> {
     for (const selector of selectors) {
-      const locator = scope.locator(selector).first();
+      const locator = scope.locator(selector);
+      let count = 0;
       try {
-        if ((await locator.count()) > 0) {
-          await locator.click({
+        count = Math.min(await locator.count(), 25);
+      } catch {
+        continue;
+      }
+
+      for (let index = 0; index < count; index += 1) {
+        const candidate = locator.nth(index);
+        try {
+          const excluded = await candidate
+            .evaluate((element, pathPrefixes) => {
+              const interactive =
+                element.closest('button, a, [role="button"]') ?? element;
+              const paths = [
+                ...(interactive.matches("path[d]") ? [interactive] : []),
+                ...Array.from(interactive.querySelectorAll("path[d]"))
+              ];
+
+              return paths.some((path) => {
+                const value = path.getAttribute("d") ?? "";
+                return pathPrefixes.some((prefix) => value.startsWith(prefix));
+              });
+            }, options.excludedSvgPathPrefixes ?? [])
+            .catch(() => false);
+
+          if (excluded) {
+            continue;
+          }
+
+          await candidate.click({
             timeout: 2500
           });
           return selector;
+        } catch {
+          continue;
         }
-      } catch {
-        continue;
       }
     }
     return null;

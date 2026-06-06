@@ -636,16 +636,22 @@ function New-ChromePlaybackScript {
   $words = "play|ouvir|ao vivo|iniciar|tocar"
   $classes = "play|btn-play|play-btn|ap-toggle"
   $mediaCommand = "play"
+  $iconPathPrefix = "M5 5.27386C5 3.56701"
   if ($Mode -eq "stop") {
     $words = "pause|pausar|stop|parar"
     $classes = "pause|stop|btn-pause|btn-stop|play-btn|ap-toggle"
     $mediaCommand = "pause"
+    $iconPathPrefix = "M5.74512 3C4.77862"
   }
 
   return @"
 (async function () {
   const words = /$words/i;
   const classes = /$classes/i;
+  const iconPathPrefix = "$iconPathPrefix";
+  const excludedIconPathPrefixes = [
+    "M176 352c53.02 0 96-42.98 96-96V96"
+  ];
   const result = {
     action: "$Mode",
     promptClicked: { clicked: false, selector: null, frameUrl: null },
@@ -678,11 +684,68 @@ function New-ChromePlaybackScript {
     }
   }
 
+  function isVisible(element) {
+    if (!element || !element.getClientRects || element.getClientRects().length === 0) {
+      return false;
+    }
+    const windowRef = element.ownerDocument && element.ownerDocument.defaultView;
+    if (!windowRef) {
+      return false;
+    }
+    const style = windowRef.getComputedStyle(element);
+    return style.visibility !== "hidden" && style.display !== "none";
+  }
+
+  function interactiveRoot(element) {
+    if (!element) {
+      return null;
+    }
+    return element.closest('button,a,[role="button"],input[type="button"],input[type="submit"]') || element;
+  }
+
+  function hasExcludedIcon(element) {
+    const root = interactiveRoot(element);
+    if (!root) {
+      return false;
+    }
+    const paths = [];
+    if (root.matches && root.matches("path[d]")) {
+      paths.push(root);
+    }
+    queryAll(root, "path[d]").forEach(function (path) {
+      paths.push(path);
+    });
+    return paths.some(function (path) {
+      const value = path.getAttribute("d") || "";
+      return excludedIconPathPrefixes.some(function (prefix) {
+        return value.indexOf(prefix) === 0;
+      });
+    });
+  }
+
+  function findIconButton(documentRef) {
+    const paths = queryAll(documentRef, 'path[d^="' + iconPathPrefix + '"]');
+    for (const path of paths) {
+      const svg = path.closest("svg");
+      if (!svg || svg.getAttribute("viewBox") !== "0 0 24 24") {
+        continue;
+      }
+      const element = interactiveRoot(path);
+      if (isVisible(element) && !hasExcludedIcon(element)) {
+        return { element, selector: "player-icon-path" };
+      }
+    }
+    return null;
+  }
+
   function findButton(documentRef) {
+    const iconButton = findIconButton(documentRef);
+    if (iconButton) {
+      return iconButton;
+    }
+
     const selectors = "$Mode" === "play"
       ? [
-          "#ap-toggle",
-          ".play-btn",
           'button[aria-label*="play" i]',
           '[role="button"][aria-label*="play" i]',
           'button[aria-label*="iniciar" i]',
@@ -690,11 +753,11 @@ function New-ChromePlaybackScript {
           '[title*="play" i]',
           '[title*="iniciar" i]',
           ".btn-play",
-          ".play"
+          ".play",
+          "#ap-toggle",
+          ".play-btn"
         ]
       : [
-          "#ap-toggle",
-          ".play-btn",
           'button[aria-label*="pause" i]',
           '[role="button"][aria-label*="pause" i]',
           '[title*="pause" i]',
@@ -704,11 +767,15 @@ function New-ChromePlaybackScript {
           ".btn-pause",
           ".pause",
           ".btn-stop",
-          ".stop"
+          ".stop",
+          "#ap-toggle",
+          ".play-btn"
         ];
 
     for (const selector of selectors) {
-      const element = queryAll(documentRef, selector).find((item) => item && item.offsetParent !== null);
+      const element = queryAll(documentRef, selector).find(function (item) {
+        return isVisible(item) && !hasExcludedIcon(item);
+      });
       if (element) {
         return { element, selector };
       }
@@ -716,11 +783,11 @@ function New-ChromePlaybackScript {
 
     const candidates = queryAll(
       documentRef,
-      'button,a,[role="button"],input[type="button"],input[type="submit"],div,span'
+      'button,a,[role="button"],input[type="button"],input[type="submit"]'
     );
     for (const element of candidates) {
       const text = textOf(element);
-      if (words.test(text) || classes.test(text)) {
+      if (!hasExcludedIcon(element) && (words.test(text) || classes.test(text))) {
         return { element, selector: "text-match" };
       }
     }
