@@ -9,6 +9,9 @@ env_example_file="${script_dir}/.env.example"
 config_file="${script_dir}/include/config.h"
 upload_port="${UPLOAD_PORT:-/dev/ttyUSB0}"
 monitor_baud="${MONITOR_BAUD:-115200}"
+platformio_venv_dir="${PLATFORMIO_VENV_DIR:-${HOME:-${script_dir}}/.local/share/radio-bot/platformio-venv}"
+platformio_cmd=()
+platformio_source=""
 
 pause() {
   if [[ -t 0 ]]; then
@@ -43,6 +46,126 @@ run_cmd() {
     echo "Falhou com exit code ${status}"
   fi
   return "$status"
+}
+
+try_platformio_command() {
+  local source="$1"
+  shift
+  local -a candidate=("$@")
+
+  if [[ "${#candidate[@]}" -eq 0 ]]; then
+    return 1
+  fi
+
+  if "${candidate[@]}" --version >/dev/null 2>&1; then
+    platformio_cmd=("${candidate[@]}")
+    platformio_source="$source"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_platformio() {
+  platformio_cmd=()
+  platformio_source=""
+
+  if [[ -n "${PLATFORMIO_CMD:-}" ]]; then
+    local -a configured_cmd
+    read -r -a configured_cmd <<< "$PLATFORMIO_CMD"
+    if try_platformio_command "PLATFORMIO_CMD" "${configured_cmd[@]}"; then
+      return 0
+    fi
+  fi
+
+  local managed_platformio="${platformio_venv_dir}/bin/platformio"
+  if [[ -x "$managed_platformio" ]] &&
+    try_platformio_command "ambiente do menu" "$managed_platformio"; then
+    return 0
+  fi
+
+  local standard_platformio="${HOME:-}/.platformio/penv/bin/platformio"
+  if [[ -n "${HOME:-}" && -x "$standard_platformio" ]] &&
+    try_platformio_command "ambiente padrao" "$standard_platformio"; then
+    return 0
+  fi
+
+  local executable
+  for executable in pio platformio; do
+    if command -v "$executable" >/dev/null 2>&1 &&
+      try_platformio_command "$(command -v "$executable")" "$executable"; then
+      return 0
+    fi
+  done
+
+  if command -v python3 >/dev/null 2>&1 &&
+    python3 -c "import platformio" >/dev/null 2>&1 &&
+    try_platformio_command "modulo Python" python3 -m platformio; then
+    return 0
+  fi
+
+  return 1
+}
+
+install_platformio() {
+  if resolve_platformio; then
+    echo "PlatformIO ja esta funcional: $("${platformio_cmd[@]}" --version)"
+    echo "Origem: ${platformio_source}"
+    if ! confirm "Atualizar/reinstalar a copia isolada mesmo assim?"; then
+      return 0
+    fi
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Python 3 nao foi encontrado. Instale python3 e python3-venv."
+    return 1
+  fi
+
+  echo "O PlatformIO sera instalado em um ambiente isolado:"
+  echo "  ${platformio_venv_dir}"
+  echo "Isso nao altera os pacotes Python globais do sistema."
+
+  run_cmd mkdir -p "$(dirname "$platformio_venv_dir")" || return 1
+  if ! run_cmd python3 -m venv "$platformio_venv_dir"; then
+    echo
+    echo "Nao foi possivel criar o ambiente virtual."
+    echo "Em Debian/Ubuntu, instale o suporte com: sudo apt install python3-venv"
+    return 1
+  fi
+
+  run_cmd "${platformio_venv_dir}/bin/python" -m pip install --upgrade platformio ||
+    return 1
+
+  if ! resolve_platformio; then
+    echo "A instalacao terminou, mas o PlatformIO ainda nao responde."
+    return 1
+  fi
+
+  echo "PlatformIO pronto: $("${platformio_cmd[@]}" --version)"
+}
+
+ensure_platformio() {
+  if resolve_platformio; then
+    return 0
+  fi
+
+  echo "PlatformIO nao esta funcional."
+  if command -v pio >/dev/null 2>&1; then
+    echo "O comando encontrado em $(command -v pio) esta quebrado ou incompleto."
+  fi
+  echo "O menu pode instalar uma copia isolada sem alterar o Python do sistema."
+
+  if confirm "Instalar/reparar o PlatformIO agora?"; then
+    install_platformio
+  else
+    echo "Use a opcao 10 quando quiser instalar ou reparar o PlatformIO."
+    return 1
+  fi
+}
+
+run_pio() {
+  ensure_platformio || return 1
+  run_cmd "${platformio_cmd[@]}" "$@"
 }
 
 config_needs_update() {
@@ -135,21 +258,21 @@ ensure_config_current() {
 
 build_firmware() {
   ensure_config_current || return 1
-  run_cmd pio run
+  run_pio run
 }
 
 upload_firmware() {
   ensure_config_current || return 1
-  run_cmd pio run -t upload --upload-port "$upload_port"
+  run_pio run -t upload --upload-port "$upload_port"
 }
 
 monitor_device() {
-  run_cmd pio device monitor -p "$upload_port" -b "$monitor_baud"
+  run_pio device monitor -p "$upload_port" -b "$monitor_baud"
 }
 
 full_upload_flow() {
   write_config || return 1
-  run_cmd pio run -t upload --upload-port "$upload_port" || return 1
+  run_pio run -t upload --upload-port "$upload_port" || return 1
 
   if confirm "Abrir monitor serial agora?"; then
     monitor_device
@@ -176,7 +299,7 @@ list_serial_ports() {
 }
 
 status_line() {
-  local env_status config_status
+  local env_status config_status platformio_status
 
   if [[ -f "$env_file" ]]; then
     env_status="ok"
@@ -192,7 +315,14 @@ status_line() {
     config_status="ok"
   fi
 
+  if resolve_platformio; then
+    platformio_status="$("${platformio_cmd[@]}" --version 2>/dev/null) [${platformio_source}]"
+  else
+    platformio_status="ausente ou quebrado"
+  fi
+
   echo ".env: ${env_status} | config.h: ${config_status} | porta: ${upload_port} | baud: ${monitor_baud}"
+  echo "PlatformIO: ${platformio_status}"
 }
 
 print_menu() {
@@ -203,16 +333,17 @@ print_menu() {
   echo "ESP32 WOL Gateway"
   status_line
   echo
-  echo "1) Criar .env a partir de .env.example"
-  echo "2) Editar .env"
-  echo "3) Gerar include/config.h a partir do .env"
-  echo "4) Build firmware"
-  echo "5) Upload firmware"
-  echo "6) Monitor serial"
-  echo "7) Gerar config + upload + opcional monitor"
-  echo "8) Alterar porta/baud"
-  echo "9) Listar portas seriais"
-  echo "0) Sair"
+  echo "1) Criar .env             - Copia o modelo inicial de configuracao."
+  echo "2) Editar .env            - Abre Wi-Fi, API, gateway e token no editor."
+  echo "3) Gerar config.h         - Converte o .env em include/config.h."
+  echo "4) Build firmware         - Compila o firmware sem gravar o ESP32."
+  echo "5) Upload firmware        - Compila e grava pela porta selecionada."
+  echo "6) Monitor serial         - Exibe os logs do ESP32 em tempo real."
+  echo "7) Config + upload        - Gera config.h, grava e oferece o monitor."
+  echo "8) Alterar porta/baud     - Troca porta USB e velocidade do monitor."
+  echo "9) Listar portas seriais  - Procura dispositivos ttyUSB e ttyACM."
+  echo "10) Reparar PlatformIO    - Instala uma copia isolada e funcional."
+  echo "0) Sair                   - Fecha este menu."
   echo
 }
 
@@ -230,6 +361,7 @@ while true; do
     7) full_upload_flow ;;
     8) set_serial_options ;;
     9) list_serial_ports ;;
+    10) install_platformio ;;
     0|q|Q) exit 0 ;;
     *) echo "Opcao invalida." ;;
   esac

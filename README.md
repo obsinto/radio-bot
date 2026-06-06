@@ -140,6 +140,10 @@ pio run -t upload --upload-port /dev/ttyUSB0
 pio device monitor -p /dev/ttyUSB0 -b 115200
 ```
 
+Como alternativa, execute `firmware/esp32-wol-gateway/menu.sh`. A opcao 10
+instala ou repara o PlatformIO em um ambiente Python isolado quando o comando
+global `pio` estiver ausente ou quebrado.
+
 Se o monitor serial mostrar caracteres estranhos como `xx����`, quase sempre e baud rate errado. O firmware usa `Serial.begin(115200)`, entao abra o monitor com `-b 115200`, como no comando acima.
 
 Por padrao, nenhum gateway ESP32 e criado automaticamente. Cadastre o gateway manualmente em `Configuracoes > Gateways WOL`.

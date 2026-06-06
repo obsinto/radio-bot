@@ -80,6 +80,17 @@ Nesse modo, o `config.h` local tem precedencia sobre a NVS. Ao atualizar token, 
 
 ## Build Manual
 
+O menu interativo reúne configuracao, build, upload e monitor serial:
+
+```bash
+cd firmware/esp32-wol-gateway
+./menu.sh
+```
+
+Se um comando `pio` antigo estiver quebrado, use a opcao
+`10) Reparar PlatformIO`. O menu instala uma copia isolada em
+`~/.local/share/radio-bot/platformio-venv`, sem alterar o Python global.
+
 Compile:
 
 ```bash
