@@ -328,6 +328,7 @@ $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
 
 const LIST_AUTOSTART_SCRIPT = String.raw`
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
 $prefix = "RadioBOT Autostart"
 $items = New-Object System.Collections.Generic.List[object]
@@ -340,11 +341,11 @@ Get-ScheduledTask -ErrorAction SilentlyContinue |
     $path = $null
     $workingDir = $null
     if ($exec.Count -gt 0) {
-      $path = $exec[0].Execute
-      $workingDir = $exec[0].WorkingDirectory
+      $path = [string]$exec[0].Execute
+      $workingDir = [string]$exec[0].WorkingDirectory
     }
     $items.Add([pscustomobject]@{
-      taskName = $task.TaskName
+      taskName = [string]$task.TaskName
       path = $(if ([string]::IsNullOrWhiteSpace($path)) { $null } else { $path })
       workingDir = $(if ([string]::IsNullOrWhiteSpace($workingDir)) { $null } else { $workingDir })
       state = [string]$task.State
