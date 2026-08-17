@@ -1211,6 +1211,7 @@ function SchedulesTab({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editingItems, setEditingItems] = useState<Record<string, string>>({});
   const [view, setView] = useState<"list" | "calendar">("list");
+  const [formOpen, setFormOpen] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
 
   const groups = groupSchedules(schedules);
@@ -1273,6 +1274,7 @@ function SchedulesTab({
   }
 
   function clearScheduleForm() {
+    setFormOpen(false);
     setEditingKey(null);
     setEditingItems({});
     setName("");
@@ -1315,6 +1317,7 @@ function SchedulesTab({
       setSharedProfileId("");
     }
 
+    setFormOpen(true);
     if (view !== "list") {
       setView("list");
     }
@@ -1437,21 +1440,55 @@ function SchedulesTab({
 
   return (
     <div className="tab-container">
-      <form className="mini-form" ref={formRef} onSubmit={submitSchedule}>
+      {!formOpen ? (
+        <button
+          type="button"
+          className="small-action form-submit schedule-add-trigger"
+          onClick={() => {
+            clearScheduleForm();
+            setFormOpen(true);
+          }}
+        >
+          <Plus aria-hidden="true" />
+          Novo agendamento
+        </button>
+      ) : null}
+
+      {formOpen ? (
+      <form
+        className="mini-form"
+        ref={formRef}
+        onSubmit={submitSchedule}
+        style={{
+          border: editingKey ? "1px solid #f0ad4e" : "1px solid #4f8cff",
+          borderLeft: editingKey ? "4px solid #f0ad4e" : "4px solid #4f8cff",
+          borderRadius: 8,
+          padding: 16,
+          background: editingKey ? "rgba(240,173,78,0.08)" : "rgba(79,140,255,0.06)"
+        }}
+      >
         <div className="form-heading">
           <div>
-            <strong>{editingKey ? "Editar agendamento" : "Criar agendamento"}</strong>
+            <strong>
+              {editingKey ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#f0ad4e" }}>
+                  <Pencil aria-hidden="true" size={14} />
+                  Editando: {name || "agendamento"}
+                </span>
+              ) : (
+                "Novo agendamento"
+              )}
+            </strong>
             <span>
               {editingKey
                 ? "Altere computadores, radio e horario desta rotina."
                 : "Selecione um ou varios computadores para criar a mesma rotina de uma vez."}
             </span>
           </div>
-          {editingKey ? (
-            <button className="ghost-button compact-action" type="button" onClick={clearScheduleForm}>
-              Cancelar
-            </button>
-          ) : null}
+          <button className="ghost-button compact-action" type="button" onClick={clearScheduleForm}>
+            <X aria-hidden="true" size={14} />
+            {editingKey ? "Cancelar edicao" : "Fechar"}
+          </button>
         </div>
 
         <div className="schedule-form-intro">
@@ -1660,6 +1697,7 @@ function SchedulesTab({
                 : "Criar agendamento"}
         </button>
       </form>
+      ) : null}
 
       <div className="schedule-view-toggle">
         <button
@@ -1700,11 +1738,22 @@ function SchedulesTab({
             .map((item) => runs.find((run) => run.scheduleId === item.id))
             .filter((run): run is DashboardState["scheduleRuns"][number] => Boolean(run))
             .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))[0];
+          const isBeingEdited = editingKey === group.key;
           return (
-            <article className="wol-row" key={group.key}>
+            <article
+              className={`wol-row${isBeingEdited ? " editing-row" : ""}`}
+              key={group.key}
+              style={isBeingEdited ? { outline: "2px solid #f0ad4e", outlineOffset: 2 } : undefined}
+            >
               <header>
                 <strong>{group.name}</strong>
-                <span className={`status-badge ${statusClass}`}>{statusLabel}</span>
+                {isBeingEdited ? (
+                  <span className="status-badge" style={{ background: "#f0ad4e", color: "#1a1a1a" }}>
+                    Editando
+                  </span>
+                ) : (
+                  <span className={`status-badge ${statusClass}`}>{statusLabel}</span>
+                )}
               </header>
               <p className="muted">
                 {group.kind === "power_on_start" ? "Ligar e tocar" : "Desligar"} - {group.timeOfDay} -{" "}
