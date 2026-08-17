@@ -1256,6 +1256,16 @@ function SchedulesTab({
     );
   }
 
+  function setDayPreset(preset: "weekdays" | "weekend" | "everyday" | "none") {
+    const presets = {
+      weekdays: [1, 2, 3, 4, 5],
+      weekend: [0, 6],
+      everyday: [0, 1, 2, 3, 4, 5, 6],
+      none: []
+    } as const;
+    setDaysOfWeek([...presets[preset]]);
+  }
+
   function toggleDevice(id: string) {
     setDeviceIds((current) =>
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
@@ -1444,6 +1454,14 @@ function SchedulesTab({
           ) : null}
         </div>
 
+        <div className="schedule-form-intro">
+          <span className="step-number">1</span>
+          <div>
+            <strong>O que deve acontecer?</strong>
+            <span>Defina um nome fácil de reconhecer e a ação da rotina.</span>
+          </div>
+        </div>
+
         <div className="field-grid two-columns">
           <label>
             Nome
@@ -1462,22 +1480,16 @@ function SchedulesTab({
               <option value="shutdown">Desligar computador</option>
             </select>
           </label>
-          <label>
-            Horario
-            <Time24Field value={timeOfDay} onChange={setTimeOfDay} />
-          </label>
-          <label>
-            Timezone
-            <input
-              required
-              name="timezone"
-              value={timezone}
-              onChange={(event) => setTimezone(event.target.value)}
-            />
-          </label>
         </div>
 
         <div className="form-field-block">
+          <div className="schedule-form-intro">
+            <span className="step-number">2</span>
+            <div>
+              <strong>Onde executar?</strong>
+              <span>Escolha um ou mais computadores.</span>
+            </div>
+          </div>
           <span className="block-label">Computadores ({deviceIds.length} selecionados)</span>
           <div className="device-picker" aria-label="Computadores">
             {devices.length === 0 ? (
@@ -1498,6 +1510,13 @@ function SchedulesTab({
 
         {kind === "power_on_start" ? (
           <div className="form-field-block">
+            <div className="schedule-form-intro">
+              <span className="step-number">3</span>
+              <div>
+                <strong>Qual rádio tocar?</strong>
+                <span>Use a mesma rádio ou escolha uma diferente por computador.</span>
+              </div>
+            </div>
             <span className="block-label">Radio</span>
             <div className="radio-mode-toggle" role="radiogroup" aria-label="Modo de radio">
               <label className={radioMode === "same" ? "active" : ""}>
@@ -1584,7 +1603,35 @@ function SchedulesTab({
         ) : null}
 
         <div className="form-field-block">
-          <span className="block-label">Dias da semana</span>
+          <div className="schedule-form-intro">
+            <span className="step-number">{kind === "power_on_start" ? "4" : "3"}</span>
+            <div>
+              <strong>Quando executar?</strong>
+              <span>Escolha o horário e os dias da rotina.</span>
+            </div>
+          </div>
+          <div className="field-grid two-columns schedule-time-fields">
+            <label>
+              Horário
+              <Time24Field value={timeOfDay} onChange={setTimeOfDay} />
+            </label>
+            <label>
+              Fuso horário
+              <select value={timezone} onChange={(event) => setTimezone(event.target.value)}>
+                <option value="America/Sao_Paulo">Brasília (GMT-3)</option>
+                <option value="America/Manaus">Manaus (GMT-4)</option>
+                <option value="America/Rio_Branco">Rio Branco (GMT-5)</option>
+              </select>
+            </label>
+          </div>
+          <div className="schedule-days-heading">
+            <span className="block-label">Dias da semana</span>
+            <div className="schedule-presets" aria-label="Atalhos de dias">
+              <button type="button" onClick={() => setDayPreset("weekdays")}>Seg–Sex</button>
+              <button type="button" onClick={() => setDayPreset("weekend")}>Fim de semana</button>
+              <button type="button" onClick={() => setDayPreset("everyday")}>Todos</button>
+            </div>
+          </div>
           <div className="day-picker" aria-label="Dias da semana">
             {weekDays.map((day) => (
               <label key={day.value} className={daysOfWeek.includes(day.value) ? "active" : ""}>
@@ -1601,7 +1648,7 @@ function SchedulesTab({
         </div>
 
         <button className="small-action form-submit" type="submit" disabled={!canSubmit}>
-          <Plus aria-hidden="true" />
+          {editingKey ? <Save aria-hidden="true" /> : <Plus aria-hidden="true" />}
           {creating
             ? editingKey
               ? "Salvando"
