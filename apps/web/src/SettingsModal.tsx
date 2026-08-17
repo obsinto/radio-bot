@@ -1136,10 +1136,12 @@ const calendarDays = [
 
 function WeekCalendar({
   groups,
-  devices
+  devices,
+  onSelectGroup
 }: {
   groups: ScheduleGroup[];
   devices: SafeDevice[];
+  onSelectGroup: (group: ScheduleGroup) => void;
 }) {
   return (
     <div className="week-calendar">
@@ -1158,13 +1160,22 @@ function WeekCalendar({
                 .join(", ");
               return (
                 <div
+                  role="button"
+                  tabIndex={0}
                   className={`week-event ${group.kind === "shutdown" ? "shutdown" : ""} ${
                     allDisabled ? "disabled" : ""
                   }`}
                   key={group.key}
-                  title={deviceNames}
-                >
-                  <span className="week-event-time">{group.timeOfDay}</span>
+                  title={`${deviceNames} — clique para editar`}
+                  onClick={() => onSelectGroup(group)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelectGroup(group);
+                    }
+                  }}
+                  style={{ cursor: "pointer" }}
+                >                  <span className="week-event-time">{group.timeOfDay}</span>
                   <span className="week-event-name">{group.name}</span>
                   <span className="week-event-meta">
                     {group.kind === "power_on_start" ? "Ligar e tocar" : "Desligar"} ·{" "}
@@ -1720,7 +1731,7 @@ function SchedulesTab({
         groups.length === 0 ? (
           <p className="empty-state">Nenhum agendamento cadastrado.</p>
         ) : (
-          <WeekCalendar groups={groups} devices={devices} />
+          <WeekCalendar groups={groups} devices={devices} onSelectGroup={startGroupEdit} />
         )
       ) : (
       <div className="wol-grid">
