@@ -1223,9 +1223,14 @@ function SchedulesTab({
   const [editingItems, setEditingItems] = useState<Record<string, string>>({});
   const [view, setView] = useState<"list" | "calendar">("list");
   const [formOpen, setFormOpen] = useState(false);
+  const [calendarDeviceFilter, setCalendarDeviceFilter] = useState<string>("all");
   const formRef = useRef<HTMLFormElement>(null);
 
   const groups = groupSchedules(schedules);
+  const calendarGroups =
+    calendarDeviceFilter === "all"
+      ? groups
+      : groups.filter((group) => group.items.some((item) => item.deviceId === calendarDeviceFilter));
   const selectedDevices = devices.filter((device) => deviceIds.includes(device.id));
 
   // "Mesma radio para todos": apenas radios vinculadas a TODOS os computadores escolhidos.
@@ -1725,13 +1730,34 @@ function SchedulesTab({
         >
           Calendario
         </button>
+
+        {view === "calendar" ? (
+          <label className="calendar-device-filter" style={{ marginLeft: "auto" }}>
+            <select
+              aria-label="Filtrar por computador"
+              value={calendarDeviceFilter}
+              onChange={(event) => setCalendarDeviceFilter(event.target.value)}
+            >
+              <option value="all">Todos os computadores</option>
+              {devices.map((device) => (
+                <option key={device.id} value={device.id}>
+                  {device.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
 
       {view === "calendar" ? (
-        groups.length === 0 ? (
-          <p className="empty-state">Nenhum agendamento cadastrado.</p>
+        calendarGroups.length === 0 ? (
+          <p className="empty-state">
+            {calendarDeviceFilter === "all"
+              ? "Nenhum agendamento cadastrado."
+              : "Nenhum agendamento para este computador."}
+          </p>
         ) : (
-          <WeekCalendar groups={groups} devices={devices} onSelectGroup={startGroupEdit} />
+          <WeekCalendar groups={calendarGroups} devices={devices} onSelectGroup={startGroupEdit} />
         )
       ) : (
       <div className="wol-grid">
