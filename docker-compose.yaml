@@ -14,6 +14,11 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: "0.50"
 
   radio-api:
     build:
@@ -37,6 +42,18 @@ services:
         condition: service_healthy
     expose:
       - "3000"
+    # node:24-slim nao tem wget/curl; o fetch nativo do Node faz o papel.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: "0.50"
 
   web:
     build:
@@ -46,9 +63,21 @@ services:
         VITE_API_URL: ${VITE_API_URL}
     restart: unless-stopped
     depends_on:
-      - radio-api
+      radio-api:
+        condition: service_healthy
     expose:
       - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health >/dev/null 2>&1 || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
 
 volumes:
   postgres-data:
